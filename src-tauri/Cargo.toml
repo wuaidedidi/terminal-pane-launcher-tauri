@@ -1,0 +1,18 @@
+[package]
+name = "terminal-pane-launcher-tauri"
+version = "0.1.0"
+description = "Cross-platform GUI shell for the Windows Terminal pane launcher"
+authors = ["Terminal Pane Launcher"]
+edition = "2021"
+
+[lib]
+name = "terminal_pane_launcher_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.6", features = [] }
+
+[dependencies]
+tauri = { version = "2.10.3", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

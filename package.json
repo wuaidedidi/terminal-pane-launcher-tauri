@@ -1,0 +1,30 @@
+{
+  "name": "terminal-pane-launcher-tauri",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vue-tsc --noEmit && vite build",
+    "env": "node scripts/env.mjs",
+    "env:install": "node scripts/env.mjs --install",
+    "check:env:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-env.ps1",
+    "install:env:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-env.ps1 -Install",
+    "check:env:mac": "bash scripts/check-env.sh",
+    "install:env:mac": "bash scripts/check-env.sh --install",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.10.1",
+    "vue": "3.5.33"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.10.1",
+    "@vitejs/plugin-vue": "6.0.3",
+    "typescript": "6.0.3",
+    "vite": "8.0.10",
+    "vue-tsc": "3.2.7"
+  }
+}
