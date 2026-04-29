@@ -1,25 +1,211 @@
-# Terminal Pane Launcher Tauri
+# Terminal Pane Launcher
 
-这是新版跨平台桌面壳，技术栈是 `Tauri 2 + Vue 3 + TypeScript + Vite`。当前 Windows 版 PowerShell 项目会继续保留，并作为 Windows 后端被这个 Tauri GUI 调用。
+[![Tauri](https://img.shields.io/badge/Tauri-2.x-24c8db)](https://tauri.app/)
+[![Vue](https://img.shields.io/badge/Vue-3.x-42b883)](https://vuejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6.x-3178c6)](https://www.typescriptlang.org/)
+[![macOS](https://img.shields.io/badge/macOS-iTerm2%20optimized-111111)](https://iterm2.com/)
+[![Windows](https://img.shields.io/badge/Windows-Legacy%20backend%20compatible-0078d4)](https://learn.microsoft.com/windows/terminal/)
 
-## 当前状态
+Terminal Pane Launcher 是一个基于 `Tauri 2 + Vue 3 + TypeScript + Vite` 的跨平台桌面启动器，用来一次性打开多个项目终端 pane，并为 Codex 工作流准备项目目录、模板提示词和启动命令。
 
-- Windows 后端：已接入现有 `Start-TerminalLayout.ps1` 和 `src/TerminalLayout.psm1`。
-- Windows GUI：Tauri/Vue 新界面已搭好，可配置 20 个 pane、Codex Prompt、模板和一键复制。
-- macOS 后端：已接入 `iTerm2 + AppleScript/osascript`，支持按 pane 配置启动 split panes。
-- 环境脚本：已提供 Windows 和 macOS 的检查/安装脚本。
+当前版本重点优化了 macOS + iTerm2 工作流，同时继续兼容原 Windows PowerShell 后端。
 
-## 目录关系
+## Highlights
 
-建议保持现在这种同级目录结构：
+- 最多配置 `20` 个 pane，每个 pane 可独立设置标题、工作目录、启动命令和 Codex 设置。
+- macOS 优先使用 iTerm2 创建大窗口 split panes；未安装 iTerm2 时降级为 Terminal.app 多窗口启动。
+- macOS 默认使用 `自动直传`，把完整合并 Prompt 作为 Codex 初始参数传入。
+- Windows 保持原有 PowerShell 后端兼容，继续调用旧版 `Start-TerminalLayout.ps1`。
+- Prompt 模板随应用打包，支持共享模板和工具模板组合。
+- 一键复制完整合并 Prompt，Tauri 环境下走原生剪贴板，避免 WebView clipboard 权限问题。
+- 打包后可安装到 `/Applications`，支持通过 `Command + Space` 直接启动。
+
+## Platform Behavior
+
+| Platform | Terminal backend | Pane layout | Prompt delivery | Config location |
+| --- | --- | --- | --- | --- |
+| macOS | iTerm2 + AppleScript，Terminal.app fallback | iTerm2 split panes | `自动直传/direct` 默认，`自动挡/manual` 可选 | `~/Library/Application Support/com.local.terminal-pane-launcher/layout.json` |
+| Windows | 原 PowerShell 后端 + Windows Terminal | 由旧后端处理 | 保留旧配置兼容 | Tauri app config + 运行时 JSON |
+| Browser preview | Vite dev server | 不启动终端 | 仅预览 UI | `localStorage` |
+
+## macOS Workflow
+
+macOS 是当前主力体验。推荐安装 iTerm2，因为它能稳定创建 split panes，并由 AppleScript 注入启动命令。
+
+### 1. 检查并安装环境
+
+双击：
 
 ```text
-制作一键启动多终端软件/
-  制作一键启动多终端软件/          # 原 Windows PowerShell 后端
-    Start-TerminalLayout.ps1
-    src/TerminalLayout.psm1
+软件Mac环境检查安装脚本.command
+```
 
-  terminal-pane-launcher-tauri/     # 新 Tauri 跨平台 GUI
+如果 macOS 提示没有执行权限，可以在项目目录执行：
+
+```bash
+chmod +x 软件Mac环境检查安装脚本.command 软件Mac一键启动Tauri版.command scripts/check-env.sh
+bash 软件Mac环境检查安装脚本.command
+```
+
+脚本会检查并尽量安装：
+
+```text
+Homebrew
+fnm
+Node/npm
+Rust/rustup/cargo
+Xcode Command Line Tools
+iTerm2
+```
+
+### 2. 开发模式启动
+
+开发阶段推荐使用脚本或 Tauri dev 模式，便于查看日志和快速调试：
+
+```bash
+npm install
+npm run tauri:dev
+```
+
+也可以双击：
+
+```text
+软件Mac一键启动Tauri版.command
+```
+
+### 3. 打包并安装为应用
+
+打包：
+
+```bash
+npm run tauri:build
+```
+
+产物位置：
+
+```text
+src-tauri/target/release/bundle/macos/Terminal Pane Launcher.app
+src-tauri/target/release/bundle/dmg/Terminal Pane Launcher_0.1.0_aarch64.dmg
+```
+
+安装到 `/Applications`：
+
+```bash
+rm -rf "/Applications/Terminal Pane Launcher.app"
+cp -R "src-tauri/target/release/bundle/macos/Terminal Pane Launcher.app" "/Applications/Terminal Pane Launcher.app"
+xattr -dr com.apple.quarantine "/Applications/Terminal Pane Launcher.app" 2>/dev/null || true
+```
+
+安装后可以通过：
+
+```text
+Command + Space -> Terminal Pane Launcher
+```
+
+直接启动。
+
+### 4. macOS Codex delivery
+
+macOS 只显示两种模式：
+
+| Mode | UI label | Behavior |
+| --- | --- | --- |
+| `direct` | 自动直传 | 默认。合并完整 Prompt，并作为 Codex 初始参数传入。 |
+| `manual` | 自动挡 | 只启动 Codex，不传长 Prompt，适合手动控制。 |
+
+`自动直传` 不会让 Codex 再去读取 Prompt 文件。为了避免 AppleScript 超长字符串问题，启动器会把完整 Prompt 写入 `.codex-launcher/run-args/` 临时参数文件，然后让 shell 执行：
+
+```bash
+codex --yolo "$(cat /path/to/run-args.md)"
+```
+
+对 Codex 来说，收到的是完整初始 Prompt。
+
+### 5. app 启动环境
+
+从 `/Applications` 或 Spotlight 启动时，macOS 不会继承终端里的 `PATH`。应用内置了 shell bootstrap，会主动加载：
+
+```text
+/opt/homebrew/bin
+brew shellenv
+fnm env --use-on-cd
+~/.nvm/nvm.sh
+```
+
+这样打包版也能找到通过 `nvm` 或 `fnm` 安装的 `codex`。
+
+## Windows Workflow
+
+Windows 端继续兼容原 PowerShell 后端，不强行迁移到 macOS 的 direct 策略。
+
+### 1. 检查并安装环境
+
+双击：
+
+```text
+软件Windows环境检查安装脚本.bat
+```
+
+脚本会检查：
+
+```text
+fnm
+Node/npm
+Rust/rustup/cargo
+Visual Studio Build Tools + C++ 组件
+WebView2 Runtime
+```
+
+### 2. 开发模式启动
+
+```powershell
+npm install
+npm run tauri:dev
+```
+
+也可以双击：
+
+```text
+软件Windows一键启动Tauri版.bat
+```
+
+该 bat 会调用：
+
+```text
+scripts/start-tauri-windows.ps1
+```
+
+避免中文路径和 cmd 解析问题。
+
+### 3. Windows 后端目录
+
+Windows 后端应包含：
+
+```text
+Start-TerminalLayout.ps1
+src/TerminalLayout.psm1
+```
+
+Tauri GUI 会自动检测同级目录里的旧后端，也可以在 Advanced 面板里手动指定 Windows backend path。
+
+Windows 启动时会调用：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File <backend>\Start-TerminalLayout.ps1 -ConfigPath <runtime-config>
+```
+
+## Project Layout
+
+推荐目录结构：
+
+```text
+workspace/
+  old-windows-backend/
+    Start-TerminalLayout.ps1
+    src/
+      TerminalLayout.psm1
+
+  terminal-pane-launcher-tauri/
     src/
     src-tauri/
     scripts/
@@ -31,216 +217,11 @@
       prompt-file-instruction.txt
 ```
 
-提示词模板会优先从当前 Tauri 项目的 `templates/` 读取，并在打包时一起带入安装包。只有导入旧配置、Windows 预览和 Windows 启动时，Tauri 程序才会自动扫描同级目录，找到包含下面文件的 Windows 后端：
+模板文件会优先从当前项目的 `templates/` 读取，并在打包时进入应用资源目录。
 
-```text
-Start-TerminalLayout.ps1
-src/TerminalLayout.psm1
-```
+## Prompt Composition
 
-## 最简单使用方式
-
-### Windows
-
-1. 双击项目根目录里的：
-
-```text
-软件Windows环境检查安装脚本.bat
-```
-
-2. 脚本会检查并尝试安装：
-
-```text
-fnm
-Node/npm
-Rust/rustup/cargo
-Visual Studio Build Tools + C++ 组件
-WebView2 Runtime
-```
-
-3. 如果脚本安装了 Rust、fnm 或 Visual Studio Build Tools，请关闭当前终端窗口，再重新打开 PowerShell。
-
-4. 进入新 Tauri 目录：
-
-```powershell
-cd "D:\work\全栈项目\制作一键启动多终端软件\terminal-pane-launcher-tauri"
-```
-
-5. 安装前端依赖：
-
-```powershell
-npm install
-```
-
-6. 启动真正的 Tauri 桌面软件：
-
-```powershell
-npm run tauri:dev
-```
-
-也可以直接双击 Tauri 版启动脚本：
-
-```text
-软件Windows一键启动Tauri版.bat
-```
-
-这个 `.bat` 只负责打开 PowerShell 并执行 `scripts/start-tauri-windows.ps1`，避免 cmd 在中文路径/中文文件名下解析异常。PowerShell 脚本会自动进入当前目录、加载 `fnm` 的 Node 环境、补充 Cargo PATH、检查 `npm/cargo`，缺少 `node_modules` 时自动执行 `npm install`，最后运行 `npm run tauri:dev`。
-
-### macOS
-
-1. 双击项目根目录里的：
-
-```text
-软件Mac环境检查安装脚本.command
-```
-
-2. 如果 macOS 提示没有执行权限，先在终端执行：
-
-```bash
-chmod +x 软件Mac环境检查安装脚本.command
-```
-
-也可以不用先 `chmod`，直接用 `bash` 运行一次环境脚本；脚本启动后会自动给两个 macOS `.command` 文件补执行权限：
-
-```bash
-bash 软件Mac环境检查安装脚本.command
-```
-
-3. 脚本会检查并尝试安装：
-
-```text
-Homebrew
-fnm
-Node/npm
-Rust/rustup/cargo
-Xcode Command Line Tools
-iTerm2（推荐，用于真正的 split panes）
-```
-
-4. 安装完成后关闭当前终端，再重新打开终端。
-
-5. 进入项目目录并启动：
-
-```bash
-cd "/你的路径/terminal-pane-launcher-tauri"
-npm install
-npm run tauri:dev
-```
-
-也可以直接双击 Tauri 版启动脚本：
-
-```text
-软件Mac一键启动Tauri版.command
-```
-
-如果 macOS 提示没有执行权限，先执行：
-
-```bash
-chmod +x 软件Mac一键启动Tauri版.command
-```
-
-如果还没授权，也可以先用 `bash` 跑一次环境脚本，它会自动给环境脚本和启动脚本都补上执行权限：
-
-```bash
-bash 软件Mac环境检查安装脚本.command
-```
-
-注意：macOS 推荐安装 iTerm2。`Save & Launch` 会优先通过 `osascript` 控制 iTerm2 创建 split panes，并按每行配置进入工作目录、执行 startupCommand 或 Codex；如果没有 iTerm2，会降级用系统 Terminal.app 打开多个窗口。
-
-## 常用命令
-
-检查当前系统环境：
-
-```powershell
-npm run env
-```
-
-尝试安装当前系统缺失环境：
-
-```powershell
-npm run env:install
-```
-
-只启动浏览器前端预览：
-
-```powershell
-npm run dev
-```
-
-启动真正的 Tauri 桌面软件：
-
-```powershell
-npm run tauri:dev
-```
-
-打包桌面软件：
-
-```powershell
-npm run tauri:build
-```
-
-## Windows 手动环境安装
-
-如果不想双击脚本，也可以手动执行：
-
-```powershell
-winget install --id Rustlang.Rustup -e --source winget
-winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget
-```
-
-安装 Visual Studio Build Tools 时，需要包含：
-
-```text
-Desktop development with C++
-MSVC
-Windows SDK
-```
-
-安装后重新打开 PowerShell，检查：
-
-```powershell
-rustc --version
-cargo --version
-node --version
-npm --version
-```
-
-## 环境脚本
-
-Windows 检查：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-env.ps1
-```
-
-Windows 检查并安装：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-env.ps1 -Install
-```
-
-macOS 检查：
-
-```bash
-bash scripts/check-env.sh
-```
-
-macOS 检查并安装：
-
-```bash
-bash scripts/check-env.sh --install
-```
-
-## 功能说明
-
-当前 Tauri GUI 已支持：
-
-- 最多 20 个 pane。
-- 每行配置标题、工作目录、Codex 设置。
-- Codex 默认 `yolo`。
-- Windows 保持原有 Prompt delivery 兼容；macOS 只显示两种：`自动挡/manual` 启动时只运行 Codex，不传长 Prompt；`自动直传/direct` 会把完整合并 Prompt 作为 Codex 初始参数传入。
-- 每行最右侧 `一键复制` 会复制完整合并 Prompt。
-- Prompt 合并顺序固定为：
+每个 pane 的完整 Prompt 由三部分组成：
 
 ```text
 1. User Prompt
@@ -248,103 +229,113 @@ bash scripts/check-env.sh --install
 3. Tool Prompt Template
 ```
 
-Windows 启动时会调用原后端：
+一键复制会复制同样的合并结果。
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File <backend>\Start-TerminalLayout.ps1 -ConfigPath <runtime-config>
-```
+## Configuration
 
-macOS 启动时会调用内置后端：
+当前 Tauri 应用保存 GUI 配置到平台应用配置目录。
+
+macOS：
 
 ```text
-osascript -> iTerm2 AppleScript；未安装 iTerm2 时降级到 Terminal.app AppleScript
+~/Library/Application Support/com.local.terminal-pane-launcher/layout.json
 ```
 
-macOS 后端会读取当前 Tauri 项目的 `templates/`，并只显示 `manual` 和 `direct` 两种 Codex prompt delivery。`direct` 会把完整合并 Prompt 作为 Codex 初始参数传入；为了避免 AppleScript 超长字符串问题，启动器会用临时 `run-args` 文件做 shell 传输，但不会让 Codex 再去读取 Prompt 文件。Windows 端继续保留旧配置和旧后端的 delivery 兼容。
+浏览器预览模式：
 
-## 配置文件
+```text
+localStorage
+```
 
-Tauri 新 GUI 会保存自己的配置到：
+旧的项目内配置：
 
 ```text
 config/layout.json
 ```
 
-预览/启动时会临时写入：
+可作为迁移参考，但打包版和当前 Tauri app 运行时不会再依赖项目工作目录，否则通过 Spotlight 启动会不稳定。
+
+## Commands
+
+| Command | Description |
+| --- | --- |
+| `npm run dev` | 启动 Vite 浏览器预览 |
+| `npm run build` | 前端类型检查并构建 |
+| `npm run tauri:dev` | 启动 Tauri 开发版 |
+| `npm run tauri:build` | 构建 release app 和安装包 |
+| `npm run check:env:mac` | 检查 macOS 环境 |
+| `npm run install:env:mac` | 检查并安装 macOS 环境 |
+| `npm run check:env:windows` | 检查 Windows 环境 |
+| `npm run install:env:windows` | 检查并安装 Windows 环境 |
+
+## Troubleshooting
+
+### macOS app 版找不到 Codex
+
+确认终端里能找到：
+
+```bash
+command -v codex
+```
+
+如果终端里能找到但 app 找不到，请重新打包安装最新版。最新版会自动加载 Homebrew、fnm 和 nvm 环境。
+
+### macOS Spotlight 里出现两个应用
+
+正式使用的是：
 
 ```text
-config/runtime-layout.json
+/Applications/Terminal Pane Launcher.app
 ```
 
-原 Windows 后端的配置不会被移动。Windows 上新 GUI 会生成兼容后端的 JSON，再交给后端启动 Windows Terminal；macOS 上则直接由 Tauri 内置后端读取同一份 JSON，优先启动 iTerm2，未安装时降级到 Terminal.app。
+如果 Spotlight 还显示构建目录里的副本，可以删除：
 
-## 常见问题
-
-### `npm` 不是内部或外部命令
-
-说明当前终端没有加载 `fnm` 的 Node 环境。推荐重新打开 PowerShell，或者执行：
-
-```powershell
-fnm env --use-on-cd | Out-String | Invoke-Expression
+```bash
+rm -rf "src-tauri/target/release/bundle/macos/Terminal Pane Launcher.app"
 ```
 
-然后检查：
+### macOS pane 打开了但没有启动 Codex
+
+检查该 pane 的 delivery 是否为：
+
+```text
+自动直传
+```
+
+当前 macOS 逻辑中，只要选择 `自动直传/direct`，即使 `codexMode` 为空，也会启动 Codex 并传入合并 Prompt。
+
+### 一键复制失败
+
+Tauri 环境下复制不依赖浏览器 Clipboard API，而是调用系统命令：
+
+```text
+macOS: pbcopy
+Windows: clip.exe
+Linux: wl-copy / xclip / xsel
+```
+
+如果仍失败，确认系统命令可用。
+
+### Windows npm 或 cargo 找不到
+
+重新打开 PowerShell 后执行：
 
 ```powershell
 node --version
 npm --version
-```
-
-### `failed to run cargo metadata`
-
-说明缺少 Rust/Cargo。运行：
-
-```powershell
-npm run env:install
-```
-
-或者双击：
-
-```text
-软件Windows环境检查安装脚本.bat
-```
-
-### `搜索源时失败: msstore`
-
-这是 Microsoft Store 源网络失败。脚本已改成安装时强制使用 `--source winget`，避免被 `msstore` 源影响。
-
-如果仍然失败，可以先执行：
-
-```powershell
-winget source update
-```
-
-然后重新双击 Windows 环境脚本。
-
-### 安装完成后还是找不到 `cargo`
-
-关闭当前终端，重新打开 PowerShell 再检查：
-
-```powershell
 cargo --version
 rustc --version
 ```
 
-如果仍然找不到，可以临时补 PATH：
+如果仍找不到，可以运行：
 
 ```powershell
-$env:Path += ";$env:USERPROFILE\.cargo\bin"
+npm run install:env:windows
 ```
 
-### Visual Studio Build Tools 安装后仍报 MSVC 缺失
+### Visual Studio Build Tools 缺失
 
-重新运行：
-
-```powershell
-npm run env
-```
-
-如果仍然缺失，打开 Visual Studio Installer，确认安装了：
+打开 Visual Studio Installer，确认安装：
 
 ```text
 Desktop development with C++
@@ -352,9 +343,20 @@ MSVC
 Windows SDK
 ```
 
-## 后续计划
+## Release Notes
 
-- macOS 后端：继续完善 iTerm2 窗口尺寸/全屏控制和 Terminal.app 兜底体验。
-- 打包发布：生成 Windows 安装包和 macOS `.dmg`。
-- 配置导入导出：方便在多台机器复用 pane 配置。
-- 模板管理：在 GUI 中直接编辑和切换 Prompt 模板。
+当前版本重点：
+
+- macOS 打包版可通过 Spotlight 启动。
+- macOS iTerm2 自动大窗口 split panes。
+- macOS 默认自动直传完整 Prompt 到 Codex 初始参数。
+- macOS app 版自动加载 nvm/fnm/Homebrew 环境。
+- Windows 保持旧后端兼容，不改变原有 PowerShell 启动路径。
+- 配置读取失败时会回退默认 20 pane，避免打包版空白页。
+
+## Roadmap
+
+- 配置导入/导出。
+- GUI 内编辑模板。
+- Windows 端更稳定的直传实验模式。
+- macOS iTerm2 布局细节和窗口行为继续优化。
