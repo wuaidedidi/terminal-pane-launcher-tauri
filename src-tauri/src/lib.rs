@@ -3,7 +3,60 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    time::{SystemTime, UNIX_EPOCH},
 };
+use serde::Deserialize;
+use tauri::{path::BaseDirectory, Manager};
+
+const MAX_PANES: usize = 20;
+const DIRECT_PROMPT_BUDGET: usize = 16_000;
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LauncherConfig {
+    #[serde(default)]
+    window_mode: String,
+    #[serde(default)]
+    default_profile: String,
+    #[serde(default)]
+    panes: Vec<PaneConfig>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PaneConfig {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    profile: String,
+    #[serde(default)]
+    startup_command: String,
+    #[serde(default)]
+    codex_mode: String,
+    #[serde(default)]
+    codex_prompt: String,
+    #[serde(default)]
+    codex_template: String,
+    #[serde(default)]
+    codex_tool_template: String,
+    #[serde(default)]
+    codex_prompt_delivery: String,
+}
+
+#[derive(Clone, Debug)]
+struct MacPanePlan {
+    pane_number: usize,
+    title: String,
+    profile: String,
+    path: PathBuf,
+    shell_command: String,
+    preview_command: String,
+    delivery: Option<String>,
+}
 
 fn project_root() -> Result<PathBuf, String> {
     let cwd = env::current_dir().map_err(|error| error.to_string())?;
@@ -54,6 +107,10 @@ fn resolve_windows_backend_path(backend_path: Option<String>) -> Result<PathBuf,
 
 #[tauri::command]
 fn detect_windows_backend_path() -> Result<String, String> {
+    if !cfg!(windows) {
+        return Ok(String::new());
+    }
+
     let root = project_root()?;
 
     if looks_like_windows_backend(&root) {
@@ -105,10 +162,19 @@ fn save_config_file(config_json: String) -> Result<(), String> {
 
 #[tauri::command]
 fn read_template_text(
+    app: tauri::AppHandle,
     backend_path: Option<String>,
     template_name: String,
 ) -> Result<String, String> {
-    let file_name = Path::new(&template_name)
+    read_template_file(&app, backend_path, &template_name)
+}
+
+fn read_template_file(
+    app: &tauri::AppHandle,
+    backend_path: Option<String>,
+    template_name: &str,
+) -> Result<String, String> {
+    let file_name = Path::new(template_name)
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| "Template name is invalid.".to_string())?;
@@ -117,10 +183,46 @@ fn read_template_text(
         return Err("Template name must not contain path separators.".to_string());
     }
 
-    let backend = resolve_windows_backend_path(backend_path)?;
-    let path = backend.join(file_name);
-    fs::read_to_string(&path)
-        .map_err(|error| format!("Failed to read template {}: {}", path.display(), error))
+    let mut checked_paths = Vec::new();
+
+    if let Ok(root) = project_root() {
+        let path = root.join("templates").join(file_name);
+        checked_paths.push(path.display().to_string());
+        if path.is_file() {
+            return fs::read_to_string(&path)
+                .map_err(|error| format!("Failed to read template {}: {}", path.display(), error));
+        }
+    }
+
+    if let Ok(path) = app
+        .path()
+        .resolve(format!("templates/{file_name}"), BaseDirectory::Resource)
+    {
+        checked_paths.push(path.display().to_string());
+        if path.is_file() {
+            return fs::read_to_string(&path)
+                .map_err(|error| format!("Failed to read template {}: {}", path.display(), error));
+        }
+    }
+
+    match resolve_windows_backend_path(backend_path) {
+        Ok(backend) => {
+            let path = backend.join(file_name);
+            checked_paths.push(path.display().to_string());
+            if path.is_file() {
+                return fs::read_to_string(&path).map_err(|error| {
+                    format!("Failed to read template {}: {}", path.display(), error)
+                });
+            }
+        }
+        Err(error) => checked_paths.push(format!("Windows backend fallback unavailable: {error}")),
+    }
+
+    Err(format!(
+        "Template {} was not found. Checked:\n{}",
+        template_name,
+        checked_paths.join("\n")
+    ))
 }
 
 #[tauri::command]
@@ -199,6 +301,588 @@ fn pick_macos_directory() -> Result<Option<String>, String> {
         Err("macOS directory selection failed.".to_string())
     } else {
         Err(stderr)
+    }
+}
+
+fn parse_launcher_config(config_json: &str) -> Result<LauncherConfig, String> {
+    serde_json::from_str(config_json)
+        .map_err(|error| format!("Failed to parse launcher config JSON: {error}"))
+}
+
+fn is_blank(value: &str) -> bool {
+    value.trim().is_empty()
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+fn resolve_launcher_path(path: &str) -> PathBuf {
+    let trimmed = path.trim();
+    if trimmed == "~" {
+        return home_dir().unwrap_or_default();
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        if let Some(home) = home_dir() {
+            return home.join(rest);
+        }
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("$HOME/") {
+        if let Some(home) = home_dir() {
+            return home.join(rest);
+        }
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("${HOME}/") {
+        if let Some(home) = home_dir() {
+            return home.join(rest);
+        }
+    }
+
+    PathBuf::from(trimmed)
+}
+
+fn uses_codex(pane: &PaneConfig) -> bool {
+    !is_blank(&pane.codex_mode) || !is_blank(&pane.codex_prompt)
+}
+
+fn normalized_delivery(value: &str) -> Result<String, String> {
+    let delivery = if is_blank(value) { "manual" } else { value.trim() };
+    match delivery {
+        "manual" | "file" | "direct" | "auto" => Ok(delivery.to_string()),
+        _ => Err("Codex prompt delivery must be manual, file, direct, or auto.".to_string()),
+    }
+}
+
+fn codex_mode_args(mode: &str) -> Vec<&'static str> {
+    let normalized = if is_blank(mode) { "yolo" } else { mode.trim() };
+    match normalized {
+        "yolo" => vec!["--yolo"],
+        "dangerous" => vec!["--dangerously-bypass-approvals-and-sandbox"],
+        "full-auto" => vec!["--full-auto"],
+        _ => Vec::new(),
+    }
+}
+
+fn sh_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn applescript_quote(value: &str) -> String {
+    format!(
+        "\"{}\"",
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\r', "")
+            .replace('\n', "\\n")
+    )
+}
+
+fn safe_file_stem(title: &str) -> String {
+    let stem: String = title
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+
+    if stem.is_empty() {
+        "pane".to_string()
+    } else {
+        stem
+    }
+}
+
+fn unique_suffix() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+
+    format!("{}-{}", millis, std::process::id())
+}
+
+fn write_codex_launcher_file(
+    working_directory: &Path,
+    pane_title: &str,
+    category: &str,
+    content: &str,
+) -> Result<PathBuf, String> {
+    let directory = working_directory
+        .join(".codex-launcher")
+        .join(category);
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Failed to create {}: {}", directory.display(), error))?;
+
+    let file_name = format!(
+        "{}-{}-{}.md",
+        unique_suffix(),
+        safe_file_stem(pane_title),
+        category
+    );
+    let path = directory.join(file_name);
+    fs::write(&path, content)
+        .map_err(|error| format!("Failed to write {}: {}", path.display(), error))?;
+    Ok(path)
+}
+
+fn read_prompt_file_instruction(
+    app: &tauri::AppHandle,
+    prompt_file: &Path,
+) -> Result<String, String> {
+    let template = read_template_file(app, None, "prompt-file-instruction.txt").unwrap_or_else(|_| {
+        "Before doing any work, read this complete prompt file:\n\n{0}\n\nTreat it as the full user instruction for this task.".to_string()
+    });
+
+    Ok(template.replace("{0}", &prompt_file.display().to_string()))
+}
+
+fn new_codex_merged_prompt(
+    app: &tauri::AppHandle,
+    pane: &PaneConfig,
+) -> Result<String, String> {
+    let template_name = if is_blank(&pane.codex_template) {
+        "全栈的提示词留档.md"
+    } else {
+        pane.codex_template.trim()
+    };
+    let tool_template_name = if is_blank(&pane.codex_tool_template) {
+        "codex的模板.md"
+    } else {
+        pane.codex_tool_template.trim()
+    };
+    let shared = read_template_file(app, None, template_name)?;
+    let tool = read_template_file(app, None, tool_template_name)?;
+    let mut parts = Vec::new();
+
+    if !is_blank(&pane.codex_prompt) {
+        parts.push("## User Prompt".to_string());
+        parts.push(pane.codex_prompt.trim().to_string());
+    }
+
+    parts.push(format!("## Shared Prompt Template: {template_name}"));
+    parts.push(shared.trim().to_string());
+    parts.push(format!("## Tool Prompt Template: {tool_template_name}"));
+    parts.push(tool.trim().to_string());
+
+    Ok(parts.join("\n\n"))
+}
+
+fn build_codex_shell_command(
+    app: &tauri::AppHandle,
+    pane: &PaneConfig,
+    working_directory: &Path,
+    preview: bool,
+) -> Result<(String, String, String), String> {
+    let mut command_parts = vec!["codex".to_string()];
+    let mut preview_parts = vec!["codex".to_string()];
+
+    for argument in codex_mode_args(&pane.codex_mode) {
+        command_parts.push(argument.to_string());
+        preview_parts.push(argument.to_string());
+    }
+
+    let mut delivery = normalized_delivery(&pane.codex_prompt_delivery)?;
+    if delivery == "manual" {
+        return Ok((
+            command_parts.join(" "),
+            preview_parts.join(" "),
+            delivery,
+        ));
+    }
+
+    let merged_prompt = new_codex_merged_prompt(app, pane)?;
+    if delivery == "auto" {
+        delivery = if merged_prompt.len() <= DIRECT_PROMPT_BUDGET {
+            "direct".to_string()
+        } else {
+            "file".to_string()
+        };
+    }
+
+    let prompt_argument = if delivery == "file" {
+        if preview {
+            format!("<file prompt instruction, {} chars>", merged_prompt.len())
+        } else {
+            let prompt_file = write_codex_launcher_file(
+                working_directory,
+                &pane.title,
+                "prompts",
+                &merged_prompt,
+            )?;
+            let instruction = read_prompt_file_instruction(app, &prompt_file)?;
+            let argument_file = write_codex_launcher_file(
+                working_directory,
+                &pane.title,
+                "run-args",
+                &instruction,
+            )?;
+            format!("\"$(cat {})\"", sh_quote(&argument_file.display().to_string()))
+        }
+    } else if preview {
+        format!("<direct prompt, {} chars>", merged_prompt.len())
+    } else {
+        let argument_file = write_codex_launcher_file(
+            working_directory,
+            &pane.title,
+            "run-args",
+            &merged_prompt,
+        )?;
+        format!("\"$(cat {})\"", sh_quote(&argument_file.display().to_string()))
+    };
+
+    command_parts.push(prompt_argument);
+    preview_parts.push(match delivery.as_str() {
+        "file" => format!("<file prompt instruction, {} chars>", merged_prompt.len()),
+        _ => format!("<direct prompt, {} chars>", merged_prompt.len()),
+    });
+
+    Ok((
+        command_parts.join(" "),
+        preview_parts.join(" "),
+        delivery,
+    ))
+}
+
+fn wrap_shell_command(path: &Path, title: &str, command: &str) -> String {
+    let mut script = format!("cd {} || exit 1; ", sh_quote(&path.display().to_string()));
+
+    if !is_blank(title) {
+        script.push_str(&format!(
+            "printf '\\033]0;%s\\007' {}; ",
+            sh_quote(title.trim())
+        ));
+    }
+
+    if is_blank(command) {
+        script.push_str("exec \"${SHELL:-/bin/zsh}\" -l");
+    } else {
+        script.push_str(command.trim());
+        script.push_str("; exec \"${SHELL:-/bin/zsh}\" -l");
+    }
+
+    script
+}
+
+fn mac_default_profile(config: &LauncherConfig) -> String {
+    let value = config.default_profile.trim();
+    if value.is_empty()
+        || value.eq_ignore_ascii_case("windows powershell")
+        || value.eq_ignore_ascii_case("powershell")
+        || value.eq_ignore_ascii_case("command prompt")
+    {
+        String::new()
+    } else {
+        value.to_string()
+    }
+}
+
+fn command_with_profile(action: &str, profile: &str, command: &str) -> String {
+    if is_blank(profile) {
+        format!(
+            "{action} with default profile command {}",
+            applescript_quote(command)
+        )
+    } else {
+        format!(
+            "{action} with profile {} command {}",
+            applescript_quote(profile),
+            applescript_quote(command)
+        )
+    }
+}
+
+fn mac_plan_command(plan: &MacPanePlan, preview: bool) -> &str {
+    if preview {
+        plan.preview_command.as_str()
+    } else {
+        plan.shell_command.as_str()
+    }
+}
+
+fn build_mac_pane_plans(
+    app: &tauri::AppHandle,
+    config: &LauncherConfig,
+    preview: bool,
+    require_existing_path: bool,
+) -> Result<Vec<MacPanePlan>, String> {
+    let enabled: Vec<(usize, &PaneConfig)> = config
+        .panes
+        .iter()
+        .enumerate()
+        .filter(|(_, pane)| pane.enabled)
+        .collect();
+
+    let mut errors = Vec::new();
+    if enabled.is_empty() {
+        errors.push("Enable at least one pane.".to_string());
+    }
+
+    if enabled.len() > MAX_PANES {
+        errors.push(format!("Pane count cannot exceed {MAX_PANES}."));
+    }
+
+    let mut needs_codex = false;
+    let default_profile = mac_default_profile(config);
+    let mut plans = Vec::new();
+
+    for (source_index, pane) in enabled {
+        let pane_number = source_index + 1;
+        let path = resolve_launcher_path(&pane.path);
+        if pane.path.trim().is_empty() {
+            errors.push(format!("Pane {pane_number} path is required."));
+            continue;
+        }
+
+        if require_existing_path && !path.is_dir() {
+            errors.push(format!(
+                "Pane {pane_number} path does not exist: {}",
+                path.display()
+            ));
+            continue;
+        }
+
+        let profile = if is_blank(&pane.profile) {
+            default_profile.clone()
+        } else {
+            pane.profile.trim().to_string()
+        };
+
+        let (inner_command, preview_inner_command, delivery) = if uses_codex(pane) {
+            needs_codex = true;
+            let (command, preview_command, delivery) =
+                build_codex_shell_command(app, pane, &path, preview)?;
+            (command, preview_command, Some(delivery))
+        } else if !is_blank(&pane.startup_command) {
+            (
+                pane.startup_command.trim().to_string(),
+                pane.startup_command.trim().to_string(),
+                None,
+            )
+        } else {
+            (String::new(), String::new(), None)
+        };
+
+        plans.push(MacPanePlan {
+            pane_number,
+            title: pane.title.trim().to_string(),
+            profile,
+            shell_command: wrap_shell_command(&path, &pane.title, &inner_command),
+            preview_command: wrap_shell_command(&path, &pane.title, &preview_inner_command),
+            path,
+            delivery,
+        });
+    }
+
+    if needs_codex && !mac_command_exists("codex") {
+        errors.push(
+            "At least one pane uses Codex, but `codex` was not found from the macOS login shell."
+                .to_string(),
+        );
+    }
+
+    if errors.is_empty() {
+        Ok(plans)
+    } else {
+        Err(errors
+            .into_iter()
+            .map(|error| format!("- {error}"))
+            .collect::<Vec<_>>()
+            .join("\n"))
+    }
+}
+
+fn mac_command_exists(command_name: &str) -> bool {
+    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    Command::new(shell)
+        .arg("-lc")
+        .arg(format!("command -v {}", sh_quote(command_name)))
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn get_grid_columns<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
+    if items.is_empty() {
+        return Vec::new();
+    }
+
+    let column_count = (items.len() as f64).sqrt().ceil().min(5.0) as usize;
+    let mut columns = Vec::new();
+
+    for column_index in 0..column_count {
+        let mut column = Vec::new();
+        let mut pane_index = column_index;
+        while pane_index < items.len() {
+            column.push(items[pane_index].clone());
+            pane_index += column_count;
+        }
+
+        if !column.is_empty() {
+            columns.push(column);
+        }
+    }
+
+    columns
+}
+
+fn build_iterm_applescript(plans: &[MacPanePlan], window_mode: &str, preview: bool) -> String {
+    let columns = get_grid_columns(plans);
+    let mut lines = vec![
+        "tell application \"iTerm2\"".to_string(),
+        "  activate".to_string(),
+    ];
+
+    let first = &columns[0][0];
+    lines.push(format!(
+        "  set newWindow to ({})",
+        command_with_profile("create window", &first.profile, mac_plan_command(first, preview))
+    ));
+    lines.push("  tell newWindow".to_string());
+    lines.push("    set pane_0 to current session".to_string());
+
+    let mut pane_variable_index = 1usize;
+    let mut top_panes = vec!["pane_0".to_string()];
+
+    for column in columns.iter().skip(1) {
+        let plan = &column[0];
+        let variable = format!("pane_{pane_variable_index}");
+        lines.push(format!("    tell pane_0"));
+        lines.push(format!(
+            "      set {variable} to ({})",
+            command_with_profile("split vertically", &plan.profile, mac_plan_command(plan, preview))
+        ));
+        lines.push("    end tell".to_string());
+        top_panes.push(variable);
+        pane_variable_index += 1;
+    }
+
+    for (column_index, column) in columns.iter().enumerate() {
+        let top_pane = &top_panes[column_index];
+        for plan in column.iter().skip(1) {
+            let variable = format!("pane_{pane_variable_index}");
+            lines.push(format!("    tell {top_pane}"));
+            lines.push(format!(
+                "      set {variable} to ({})",
+                command_with_profile("split horizontally", &plan.profile, mac_plan_command(plan, preview))
+            ));
+            lines.push("    end tell".to_string());
+            pane_variable_index += 1;
+        }
+    }
+
+    if window_mode.trim() == "fullscreen" {
+        lines.push("    -- Fullscreen is requested; use the iTerm2 profile/window shortcut if the window is not already fullscreen.".to_string());
+    } else if window_mode.trim() == "maximized" {
+        lines.push("    -- Maximized is requested; iTerm2 keeps the normal macOS window controls for this launch.".to_string());
+    }
+
+    lines.push("  end tell".to_string());
+    lines.push("end tell".to_string());
+    lines.join("\n")
+}
+
+fn build_macos_preview(plans: &[MacPanePlan], window_mode: &str, script: &str) -> String {
+    let columns = get_grid_columns(plans);
+    let row_count = columns.iter().map(Vec::len).max().unwrap_or(0);
+    let mut lines = vec![
+        "macOS iTerm2 launch plan".to_string(),
+        format!("Panes: {}", plans.len()),
+        format!("Layout: {} columns x {} rows", columns.len(), row_count),
+        format!("Window mode: {}", if is_blank(window_mode) { "normal" } else { window_mode }),
+        String::new(),
+    ];
+
+    for plan in plans {
+        lines.push(format!("Pane {}: {}", plan.pane_number, if is_blank(&plan.title) { "(untitled)" } else { &plan.title }));
+        lines.push(format!("  Directory: {}", plan.path.display()));
+        lines.push(format!(
+            "  iTerm2 profile: {}",
+            if is_blank(&plan.profile) {
+                "default"
+            } else {
+                &plan.profile
+            }
+        ));
+        if let Some(delivery) = &plan.delivery {
+            lines.push(format!("  Codex prompt delivery: {delivery}"));
+        }
+        lines.push(format!("  Command: {}", plan.preview_command));
+    }
+
+    lines.push(String::new());
+    lines.push("AppleScript preview:".to_string());
+    lines.push(script.to_string());
+    lines.join("\n")
+}
+
+fn ensure_iterm_available() -> Result<(), String> {
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(r#"id of application "iTerm2""#)
+        .output()
+        .map_err(|error| format!("Failed to check iTerm2 availability: {error}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err("iTerm2 is required for macOS split-pane launch. Install iTerm2 and try again.".to_string())
+    }
+}
+
+fn run_macos_backend(
+    app: tauri::AppHandle,
+    config_json: String,
+    preview: bool,
+    skip_path_check: bool,
+) -> Result<String, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("The macOS backend only runs on macOS.".to_string());
+    }
+
+    let config = parse_launcher_config(&config_json)?;
+    let plans = build_mac_pane_plans(&app, &config, preview, !skip_path_check)?;
+    let window_mode = if is_blank(&config.window_mode) {
+        "normal"
+    } else {
+        config.window_mode.trim()
+    };
+    let script = build_iterm_applescript(&plans, window_mode, preview);
+
+    if preview {
+        return Ok(build_macos_preview(&plans, window_mode, &script));
+    }
+
+    ensure_iterm_available()?;
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output()
+        .map_err(|error| format!("Failed to launch iTerm2 through osascript: {error}"))?;
+
+    if output.status.success() {
+        Ok(format!(
+            "macOS iTerm2 launch started.\n{}",
+            build_macos_preview(&plans, window_mode, &script)
+        ))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            Err("iTerm2 AppleScript launch failed.".to_string())
+        } else {
+            Err(stderr)
+        }
     }
 }
 
@@ -302,20 +986,38 @@ fn run_windows_backend(
 
 #[tauri::command]
 fn preview_windows_backend(
+    app: tauri::AppHandle,
     backend_path: Option<String>,
     config_json: String,
     skip_path_check: bool,
 ) -> Result<String, String> {
-    run_windows_backend(backend_path, config_json, true, skip_path_check)
+    if cfg!(windows) {
+        return run_windows_backend(backend_path, config_json, true, skip_path_check);
+    }
+
+    if cfg!(target_os = "macos") {
+        return run_macos_backend(app, config_json, true, skip_path_check);
+    }
+
+    Err("Preview is only implemented for Windows and macOS.".to_string())
 }
 
 #[tauri::command]
 fn launch_windows_backend(
+    app: tauri::AppHandle,
     backend_path: Option<String>,
     config_json: String,
     skip_path_check: bool,
 ) -> Result<String, String> {
-    run_windows_backend(backend_path, config_json, false, skip_path_check)
+    if cfg!(windows) {
+        return run_windows_backend(backend_path, config_json, false, skip_path_check);
+    }
+
+    if cfg!(target_os = "macos") {
+        return run_macos_backend(app, config_json, false, skip_path_check);
+    }
+
+    Err("Launch is only implemented for Windows and macOS.".to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

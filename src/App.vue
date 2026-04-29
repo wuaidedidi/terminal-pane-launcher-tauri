@@ -260,7 +260,7 @@ async function handleLaunch(): Promise<void> {
     if (!(await persistConfig())) return;
 
     const output = await launchWindowsBackend(config.value, settings);
-    previewText.value = output || "Windows backend launch command completed.";
+    previewText.value = output || "Launch command completed.";
     status.value = `Launched ${enabledCount.value} pane(s).`;
   } catch (error) {
     status.value = `Launch failed: ${formatError(error)}`;

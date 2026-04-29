@@ -6,7 +6,7 @@
 
 - Windows 后端：已接入现有 `Start-TerminalLayout.ps1` 和 `src/TerminalLayout.psm1`。
 - Windows GUI：Tauri/Vue 新界面已搭好，可配置 20 个 pane、Codex Prompt、模板和一键复制。
-- macOS GUI：Tauri 壳已具备跨平台基础，macOS 后端后续计划接 `iTerm2 + AppleScript/osascript`。
+- macOS 后端：已接入 `iTerm2 + AppleScript/osascript`，支持按 pane 配置启动 split panes。
 - 环境脚本：已提供 Windows 和 macOS 的检查/安装脚本。
 
 ## 目录关系
@@ -18,18 +18,20 @@
   制作一键启动多终端软件/          # 原 Windows PowerShell 后端
     Start-TerminalLayout.ps1
     src/TerminalLayout.psm1
-    全栈的提示词留档.md
-    跨平台提示词留档.md
-    codex的模板.md
-    claudecode的模板.md
 
   terminal-pane-launcher-tauri/     # 新 Tauri 跨平台 GUI
     src/
     src-tauri/
     scripts/
+    templates/
+      全栈的提示词留档.md
+      跨平台提示词留档.md
+      codex的模板.md
+      claudecode的模板.md
+      prompt-file-instruction.txt
 ```
 
-Tauri 程序会自动扫描同级目录，找到包含下面文件的 Windows 后端：
+提示词模板会优先从当前 Tauri 项目的 `templates/` 读取，并在打包时一起带入安装包。只有导入旧配置、Windows 预览和 Windows 启动时，Tauri 程序才会自动扫描同级目录，找到包含下面文件的 Windows 后端：
 
 ```text
 Start-TerminalLayout.ps1
@@ -112,6 +114,7 @@ fnm
 Node/npm
 Rust/rustup/cargo
 Xcode Command Line Tools
+iTerm2
 ```
 
 4. 安装完成后关闭当前终端，再重新打开终端。
@@ -142,7 +145,7 @@ chmod +x 软件Mac一键启动Tauri版.command
 bash 软件Mac环境检查安装脚本.command
 ```
 
-注意：macOS 后端启动 iTerm2 的功能还在后续开发中，目前 macOS 主要用于跑跨平台 GUI 壳。
+注意：macOS 启动多 pane 需要安装 iTerm2。`Save & Launch` 会通过 `osascript` 控制 iTerm2 创建 split panes，并按每行配置进入工作目录、执行 startupCommand 或 Codex。
 
 ## 常用命令
 
@@ -251,6 +254,14 @@ Windows 启动时会调用原后端：
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File <backend>\Start-TerminalLayout.ps1 -ConfigPath <runtime-config>
 ```
 
+macOS 启动时会调用内置后端：
+
+```text
+osascript -> iTerm2 AppleScript
+```
+
+macOS 后端会读取当前 Tauri 项目的 `templates/`，并支持 `manual`、`file`、`direct`、`auto` 四种 Codex prompt delivery。`file` 和超长 `auto` prompt 会在对应工作目录下写入 `.codex-launcher/` 临时提示词文件。
+
 ## 配置文件
 
 Tauri 新 GUI 会保存自己的配置到：
@@ -265,7 +276,7 @@ config/layout.json
 config/runtime-layout.json
 ```
 
-原 Windows 后端的配置不会被移动。新 GUI 会生成兼容后端的 JSON，再交给后端启动 Windows Terminal。
+原 Windows 后端的配置不会被移动。Windows 上新 GUI 会生成兼容后端的 JSON，再交给后端启动 Windows Terminal；macOS 上则直接由 Tauri 内置后端读取同一份 JSON 并启动 iTerm2。
 
 ## 常见问题
 
@@ -343,7 +354,7 @@ Windows SDK
 
 ## 后续计划
 
-- macOS 后端：用 iTerm2 + AppleScript/osascript 实现 split panes。
+- macOS 后端：继续完善 iTerm2 窗口尺寸/全屏控制和更多终端应用适配。
 - 打包发布：生成 Windows 安装包和 macOS `.dmg`。
 - 配置导入导出：方便在多台机器复用 pane 配置。
 - 模板管理：在 GUI 中直接编辑和切换 Prompt 模板。

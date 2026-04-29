@@ -16,6 +16,10 @@ version_line() {
   fi
 }
 
+has_iterm2() {
+  osascript -e 'id of application "iTerm2"' >/dev/null 2>&1
+}
+
 print_check() {
   local name="$1"
   local ok="$2"
@@ -80,6 +84,14 @@ if { ! has_cmd cargo || ! has_cmd rustc; } && [[ "$INSTALL" == "1" ]]; then
   source "$HOME/.cargo/env"
 fi
 
+if ! has_iterm2 && [[ "$INSTALL" == "1" ]]; then
+  if has_cmd brew; then
+    brew install --cask iterm2
+  else
+    echo "Cannot install iTerm2 automatically without Homebrew."
+  fi
+fi
+
 XCODE_PATH=""
 if xcode-select -p >/dev/null 2>&1; then
   XCODE_PATH="$(xcode-select -p)"
@@ -97,9 +109,10 @@ print_check "rustup" "$(has_cmd rustup && echo 1 || echo 0)" "$(version_line rus
 print_check "rustc" "$(has_cmd rustc && echo 1 || echo 0)" "$(version_line rustc)" "Install Rust through rustup."
 print_check "cargo" "$(has_cmd cargo && echo 1 || echo 0)" "$(version_line cargo)" "Install Rust through rustup."
 print_check "Xcode Command Line Tools" "$(xcode-select -p >/dev/null 2>&1 && echo 1 || echo 0)" "$XCODE_PATH" "xcode-select --install"
+print_check "iTerm2" "$(has_iterm2 && echo 1 || echo 0)" "Required for macOS split-pane launch" "brew install --cask iterm2"
 
 echo
-if has_cmd node && has_cmd npm && has_cmd cargo && has_cmd rustc && xcode-select -p >/dev/null 2>&1; then
+if has_cmd node && has_cmd npm && has_cmd cargo && has_cmd rustc && xcode-select -p >/dev/null 2>&1 && has_iterm2; then
   echo "Environment looks ready. Try: npm run tauri:dev"
 else
   echo "Environment is not ready yet."

@@ -100,7 +100,7 @@ export async function previewWindowsBackend(
   settings: AppSettings,
 ): Promise<string> {
   if (!isTauriRuntime()) {
-    return "浏览器预览模式：启动 Windows 后端需要在 Tauri 中运行。";
+    return "浏览器预览模式：启动平台后端需要在 Tauri 中运行。";
   }
 
   return invoke<string>("preview_windows_backend", {
@@ -115,7 +115,7 @@ export async function launchWindowsBackend(
   settings: AppSettings,
 ): Promise<string> {
   if (!isTauriRuntime()) {
-    return "浏览器预览模式：启动 Windows 后端需要在 Tauri 中运行。";
+    return "浏览器预览模式：启动平台后端需要在 Tauri 中运行。";
   }
 
   return invoke<string>("launch_windows_backend", {
