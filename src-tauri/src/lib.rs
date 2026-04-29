@@ -188,7 +188,7 @@ fn write_clipboard_text(text: String) -> Result<(), String> {
     }
 
     if cfg!(windows) {
-        return write_clipboard_with_command("clip.exe", &[], &text);
+        return write_windows_clipboard_text(&text);
     }
 
     for (command, args) in [
@@ -202,6 +202,44 @@ fn write_clipboard_text(text: String) -> Result<(), String> {
     }
 
     Err("No supported clipboard command was found.".to_string())
+}
+
+fn write_windows_clipboard_text(text: &str) -> Result<(), String> {
+    let temp_path = env::temp_dir().join(format!(
+        "terminal-pane-launcher-clipboard-{}.txt",
+        unique_suffix()
+    ));
+    fs::write(&temp_path, text.as_bytes())
+        .map_err(|error| format!("Failed to write clipboard temp file: {error}"))?;
+
+    let escaped_path = temp_path.display().to_string().replace('\'', "''");
+    let script = format!(
+        "$p = '{}'; $text = [IO.File]::ReadAllText($p, [Text.UTF8Encoding]::new($false)); Set-Clipboard -Value $text",
+        escaped_path
+    );
+
+    let output_result = Command::new("powershell.exe")
+        .arg("-NoProfile")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-Command")
+        .arg(script)
+        .output()
+        .map_err(|error| format!("Failed to start PowerShell Set-Clipboard: {error}"));
+
+    let _ = fs::remove_file(&temp_path);
+    let output = output_result?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if stderr.is_empty() {
+            "PowerShell Set-Clipboard failed.".to_string()
+        } else {
+            stderr
+        })
+    }
 }
 
 fn write_clipboard_with_command(command: &str, args: &[&str], text: &str) -> Result<(), String> {
