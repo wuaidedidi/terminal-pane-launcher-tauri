@@ -17,7 +17,8 @@ version_line() {
 }
 
 has_iterm2() {
-  osascript -e 'id of application "iTerm2"' >/dev/null 2>&1
+  osascript -e 'id of application id "com.googlecode.iterm2"' >/dev/null 2>&1 ||
+    osascript -e 'id of application "iTerm"' >/dev/null 2>&1
 }
 
 print_check() {
@@ -109,11 +110,14 @@ print_check "rustup" "$(has_cmd rustup && echo 1 || echo 0)" "$(version_line rus
 print_check "rustc" "$(has_cmd rustc && echo 1 || echo 0)" "$(version_line rustc)" "Install Rust through rustup."
 print_check "cargo" "$(has_cmd cargo && echo 1 || echo 0)" "$(version_line cargo)" "Install Rust through rustup."
 print_check "Xcode Command Line Tools" "$(xcode-select -p >/dev/null 2>&1 && echo 1 || echo 0)" "$XCODE_PATH" "xcode-select --install"
-print_check "iTerm2" "$(has_iterm2 && echo 1 || echo 0)" "Required for macOS split-pane launch" "brew install --cask iterm2"
+print_check "iTerm2" "$(has_iterm2 && echo 1 || echo 0)" "Recommended for macOS split-pane launch" "brew install --cask iterm2"
 
 echo
-if has_cmd node && has_cmd npm && has_cmd cargo && has_cmd rustc && xcode-select -p >/dev/null 2>&1 && has_iterm2; then
+if has_cmd node && has_cmd npm && has_cmd cargo && has_cmd rustc && xcode-select -p >/dev/null 2>&1; then
   echo "Environment looks ready. Try: npm run tauri:dev"
+  if ! has_iterm2; then
+    echo "Tip: install iTerm2 for true split-pane launch. Without it, macOS will fall back to Terminal.app windows."
+  fi
 else
   echo "Environment is not ready yet."
   if [[ "$INSTALL" != "1" ]]; then

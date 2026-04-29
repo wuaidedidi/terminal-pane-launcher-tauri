@@ -63,7 +63,8 @@ button:disabled {
 
 input,
 select,
-textarea {
+textarea,
+.readonly-field {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -71,6 +72,12 @@ textarea {
   color: var(--ink);
   background: rgba(255, 255, 255, 0.78);
   outline: none;
+}
+
+.readonly-field {
+  color: var(--green-deep);
+  background: #e6f1e5;
+  font-weight: 800;
 }
 
 textarea {
@@ -279,6 +286,15 @@ label {
   justify-content: center;
   border-radius: 999px;
   padding: 8px 10px;
+  color: var(--green-deep);
+  background: #ecf6df;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.prompt-select {
+  border-radius: 999px;
+  padding: 8px 30px 8px 12px;
   color: var(--green-deep);
   background: #ecf6df;
   font-size: 12px;

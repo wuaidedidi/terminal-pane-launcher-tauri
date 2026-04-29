@@ -1,6 +1,7 @@
 export type WindowMode = "maximized" | "fullscreen" | "normal";
 export type CodexMode = "" | "yolo" | "dangerous" | "full-auto";
 export type PromptDelivery = "manual" | "file" | "direct" | "auto";
+export type AppPlatform = "windows" | "macos" | "linux" | "unknown";
 
 export interface PaneConfig {
   enabled: boolean;

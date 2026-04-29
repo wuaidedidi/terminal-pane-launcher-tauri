@@ -1,4 +1,4 @@
-import type { AppSettings, LauncherConfig, PaneConfig, PromptDelivery } from "./types";
+import type { AppPlatform, AppSettings, LauncherConfig, PaneConfig, PromptDelivery } from "./types";
 
 export const MAX_PANES = 20;
 
@@ -19,9 +19,27 @@ export const DELIVERY_LABELS: Record<PromptDelivery, string> = {
   auto: "auto (direct/file)",
 };
 
-export function createDefaultPane(index: number): PaneConfig {
+export function getDeliveryLabel(value: PromptDelivery, platform: AppPlatform): string {
+  if (platform === "macos") {
+    return value === "direct" ? "自动直传" : "自动挡";
+  }
+
+  return DELIVERY_LABELS[value];
+}
+
+function normalizePromptDelivery(value: unknown, platform: AppPlatform): PromptDelivery {
+  if (value === "direct") return "direct";
+  if (platform !== "macos" && (value === "file" || value === "auto")) return value;
+  return platform === "macos" ? "direct" : "manual";
+}
+
+export function createDefaultPane(
+  index: number,
+  enabled = index === 0,
+  platform: AppPlatform = "windows",
+): PaneConfig {
   return {
-    enabled: index === 0,
+    enabled,
     title: `Pane ${index + 1}`,
     path: "",
     profile: "",
@@ -30,22 +48,29 @@ export function createDefaultPane(index: number): PaneConfig {
     codexPrompt: "",
     codexTemplate: SHARED_TEMPLATES[0],
     codexToolTemplate: TOOL_TEMPLATES[0],
-    codexPromptDelivery: "manual",
+    codexPromptDelivery: platform === "macos" ? "direct" : "manual",
   };
 }
 
-export function createDefaultConfig(): LauncherConfig {
+export function createDefaultConfig(platform: AppPlatform = "windows"): LauncherConfig {
+  const enableFirstPane = platform !== "macos";
+
   return {
     schemaVersion: 1,
     windowMode: "maximized",
     layoutMode: "balancedGrid",
-    defaultProfile: "Windows PowerShell",
-    panes: Array.from({ length: MAX_PANES }, (_, index) => createDefaultPane(index)),
+    defaultProfile: platform === "macos" ? "" : "Windows PowerShell",
+    panes: Array.from({ length: MAX_PANES }, (_, index) =>
+      createDefaultPane(index, enableFirstPane && index === 0, platform),
+    ),
   };
 }
 
-export function repairConfig(input: Partial<LauncherConfig> | null | undefined): LauncherConfig {
-  const defaults = createDefaultConfig();
+export function repairConfig(
+  input: Partial<LauncherConfig> | null | undefined,
+  platform: AppPlatform = "windows",
+): LauncherConfig {
+  const defaults = createDefaultConfig(platform);
   const sourcePanes = Array.isArray(input?.panes) ? input.panes : [];
 
   return {
@@ -58,9 +83,10 @@ export function repairConfig(input: Partial<LauncherConfig> | null | undefined):
       ...(sourcePanes[index] ?? {}),
       codexTemplate: sourcePanes[index]?.codexTemplate || defaultPane.codexTemplate,
       codexToolTemplate: sourcePanes[index]?.codexToolTemplate || defaultPane.codexToolTemplate,
-      codexPromptDelivery:
-        (sourcePanes[index]?.codexPromptDelivery as PromptDelivery | undefined) ||
-        defaultPane.codexPromptDelivery,
+      codexPromptDelivery: normalizePromptDelivery(
+        sourcePanes[index]?.codexPromptDelivery,
+        platform,
+      ),
     })),
   };
 }

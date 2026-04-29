@@ -13,10 +13,11 @@
     "windows": [
       {
         "title": "Terminal Pane Launcher",
-        "width": 1280,
-        "height": 860,
+        "width": 1560,
+        "height": 980,
         "minWidth": 1180,
-        "minHeight": 760
+        "minHeight": 760,
+        "center": true
       }
     ],
     "security": {

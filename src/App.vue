@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import {
-  DELIVERY_LABELS,
   MAX_PANES,
   SHARED_TEMPLATES,
   TOOL_TEMPLATES,
+  getDeliveryLabel,
   repairConfig,
 } from "./defaults";
 import {
   detectWindowsBackendPath,
+  getCurrentPlatform,
   launchWindowsBackend,
   loadConfig,
   loadSettings,
@@ -20,9 +21,17 @@ import {
   saveSettings,
   writeClipboardText,
 } from "./backend";
-import type { AppSettings, CodexMode, LauncherConfig, PaneConfig, PromptDelivery } from "./types";
+import type {
+  AppPlatform,
+  AppSettings,
+  CodexMode,
+  LauncherConfig,
+  PaneConfig,
+  PromptDelivery,
+} from "./types";
 
 const config = ref<LauncherConfig | null>(null);
+const currentPlatform = ref<AppPlatform>("unknown");
 const settings = reactive<AppSettings>(loadSettings());
 const previewText = ref("");
 const status = ref("Ready.");
@@ -36,6 +45,7 @@ const sharedTemplateDraft = ref(SHARED_TEMPLATES[0]);
 const toolTemplateDraft = ref(TOOL_TEMPLATES[0]);
 
 const enabledCount = computed(() => config.value?.panes.filter((pane) => pane.enabled).length ?? 0);
+const isMacOs = computed(() => currentPlatform.value === "macos");
 const gridSummary = computed(() => {
   const count = enabledCount.value;
   if (count <= 1) return "1 pane";
@@ -43,13 +53,17 @@ const gridSummary = computed(() => {
   const rows = Math.ceil(count / columns);
   return `${columns} columns x ${rows} rows`;
 });
+const deliveryModes = computed<PromptDelivery[]>(() =>
+  isMacOs.value ? ["manual", "direct"] : ["manual", "file", "direct", "auto"],
+);
 
 const codexModes: CodexMode[] = ["", "yolo", "dangerous", "full-auto"];
-const deliveryModes: PromptDelivery[] = ["manual", "file", "direct", "auto"];
 
 onMounted(async () => {
+  currentPlatform.value = await getCurrentPlatform();
+
   try {
-    if (!settings.windowsBackendPath) {
+    if (currentPlatform.value === "windows" && !settings.windowsBackendPath) {
       settings.windowsBackendPath = await detectWindowsBackendPath();
       saveSettings(settings);
     }
@@ -57,11 +71,25 @@ onMounted(async () => {
     status.value = `Backend auto-detect skipped: ${formatError(error)}`;
   }
 
-  config.value = await loadConfig();
-  if (isBlankStarterConfig(config.value) && settings.windowsBackendPath) {
+  config.value = await loadConfig(currentPlatform.value);
+  if (currentPlatform.value === "macos") {
+    config.value.windowMode = "maximized";
+  }
+  if (shouldResetMacWindowsPreset(config.value)) {
+    config.value = resetMacWindowsPreset(config.value);
+    await saveConfig(config.value, currentPlatform.value);
+    status.value =
+      "macOS detected Windows preset directories, so all panes were unchecked for a fresh start.";
+  }
+
+  if (
+    currentPlatform.value === "windows" &&
+    isBlankStarterConfig(config.value) &&
+    settings.windowsBackendPath
+  ) {
     try {
-      config.value = await loadWindowsBackendConfig(settings);
-      await saveConfig(config.value);
+      config.value = await loadWindowsBackendConfig(settings, currentPlatform.value);
+      await saveConfig(config.value, currentPlatform.value);
       status.value = "Imported existing Windows backend config.";
     } catch (error) {
       status.value = `Windows config auto-import skipped: ${formatError(error)}`;
@@ -105,6 +133,41 @@ function isMissingWorkingDirectory(path: string): boolean {
   return value === "" || value === "%userprofile%" || value === "$env:userprofile" || value === "~";
 }
 
+function isWindowsStyleWorkingDirectory(path: string): boolean {
+  const value = path.trim();
+  const lower = value.toLowerCase();
+  return (
+    /^[a-z]:[\\/]/i.test(value) ||
+    lower === "%userprofile%" ||
+    lower === "$env:userprofile"
+  );
+}
+
+function shouldResetMacWindowsPreset(value: LauncherConfig): boolean {
+  if (currentPlatform.value !== "macos") {
+    return false;
+  }
+
+  const enabledPanes = value.panes.filter((pane) => pane.enabled);
+  return (
+    enabledPanes.length > 0 &&
+    enabledPanes.every((pane) => isWindowsStyleWorkingDirectory(pane.path))
+  );
+}
+
+function resetMacWindowsPreset(value: LauncherConfig): LauncherConfig {
+  const repaired = repairConfig(value, "macos");
+  return {
+    ...repaired,
+    defaultProfile: repaired.defaultProfile === "Windows PowerShell" ? "" : repaired.defaultProfile,
+    panes: repaired.panes.map((pane) => ({
+      ...pane,
+      enabled: false,
+      path: isWindowsStyleWorkingDirectory(pane.path) ? "" : pane.path,
+    })),
+  };
+}
+
 function validateEnabledWorkingDirectories(value: LauncherConfig): string[] {
   return value.panes.flatMap((pane, index) => {
     if (!pane.enabled || !isMissingWorkingDirectory(pane.path)) {
@@ -128,8 +191,8 @@ function showValidationErrors(errors: string[]): void {
 async function importWindowsConfig(): Promise<void> {
   try {
     isBusy.value = true;
-    config.value = await loadWindowsBackendConfig(settings);
-    await saveConfig(config.value);
+    config.value = await loadWindowsBackendConfig(settings, currentPlatform.value);
+    await saveConfig(config.value, currentPlatform.value);
     status.value = "Imported existing Windows backend config.";
   } catch (error) {
     status.value = `Import failed: ${formatError(error)}`;
@@ -162,6 +225,9 @@ function openCodexDialog(index: number): void {
   promptDraft.value = pane.codexPrompt;
   modeDraft.value = pane.codexMode || "yolo";
   deliveryDraft.value = pane.codexPromptDelivery || "manual";
+  if (isMacOs.value && deliveryDraft.value !== "direct") {
+    deliveryDraft.value = "direct";
+  }
   sharedTemplateDraft.value = pane.codexTemplate || SHARED_TEMPLATES[0];
   toolTemplateDraft.value = pane.codexToolTemplate || TOOL_TEMPLATES[0];
 }
@@ -209,17 +275,19 @@ async function copyMergedPrompt(index: number): Promise<void> {
   }
 }
 
-async function persistConfig(): Promise<boolean> {
+async function persistConfig(validateBeforeRun = false): Promise<boolean> {
   if (!config.value) return false;
 
-  config.value = repairConfig(config.value);
-  const validationErrors = validateEnabledWorkingDirectories(config.value);
-  if (validationErrors.length > 0) {
-    showValidationErrors(validationErrors);
-    return false;
+  config.value = repairConfig(config.value, currentPlatform.value);
+  if (validateBeforeRun) {
+    const validationErrors = validateEnabledWorkingDirectories(config.value);
+    if (validationErrors.length > 0) {
+      showValidationErrors(validationErrors);
+      return false;
+    }
   }
 
-  await saveConfig(config.value);
+  await saveConfig(config.value, currentPlatform.value);
   saveSettings(settings);
   status.value = `Saved ${MAX_PANES} pane config.`;
   return true;
@@ -241,7 +309,7 @@ async function handlePreview(): Promise<void> {
 
   try {
     isBusy.value = true;
-    if (!(await persistConfig())) return;
+    if (!(await persistConfig(true))) return;
 
     previewText.value = await previewWindowsBackend(config.value, settings);
     status.value = `Previewed ${enabledCount.value} pane(s).`;
@@ -257,7 +325,7 @@ async function handleLaunch(): Promise<void> {
 
   try {
     isBusy.value = true;
-    if (!(await persistConfig())) return;
+    if (!(await persistConfig(true))) return;
 
     const output = await launchWindowsBackend(config.value, settings);
     previewText.value = output || "Launch command completed.";
@@ -288,13 +356,17 @@ async function handleLaunch(): Promise<void> {
     </section>
 
     <section class="settings-bar">
-      <label>
+      <label v-if="!isMacOs">
         Window mode
         <select v-if="config" v-model="config.windowMode">
           <option value="maximized">maximized</option>
           <option value="fullscreen">fullscreen</option>
           <option value="normal">normal</option>
         </select>
+      </label>
+      <label v-else>
+        macOS launch window
+        <div class="readonly-field">Optimized large iTerm2 window</div>
       </label>
       <div class="settings-summary">
         Enabled panes must choose real project directories before launch.
@@ -355,8 +427,13 @@ async function handleLaunch(): Promise<void> {
         <button class="soft-button" @click="openCodexDialog(index)">
           {{ pane.codexPrompt || pane.codexMode ? "Codex*" : "Codex" }}
         </button>
-        <span class="prompt-badge">
-          {{ DELIVERY_LABELS[pane.codexPromptDelivery] }}
+        <select v-if="isMacOs" class="prompt-select" v-model="pane.codexPromptDelivery">
+          <option v-for="mode in deliveryModes" :key="mode" :value="mode">
+            {{ getDeliveryLabel(mode, currentPlatform) }}
+          </option>
+        </select>
+        <span v-else class="prompt-badge">
+          {{ getDeliveryLabel(pane.codexPromptDelivery, currentPlatform) }}
         </span>
         <button class="copy-button" :disabled="isBusy" @click="copyMergedPrompt(index)">
           一键复制
@@ -402,7 +479,7 @@ async function handleLaunch(): Promise<void> {
             Delivery
             <select v-model="deliveryDraft">
               <option v-for="mode in deliveryModes" :key="mode" :value="mode">
-                {{ DELIVERY_LABELS[mode] }}
+                {{ getDeliveryLabel(mode, currentPlatform) }}
               </option>
             </select>
           </label>

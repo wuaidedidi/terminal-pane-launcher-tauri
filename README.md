@@ -114,7 +114,7 @@ fnm
 Node/npm
 Rust/rustup/cargo
 Xcode Command Line Tools
-iTerm2
+iTerm2（推荐，用于真正的 split panes）
 ```
 
 4. 安装完成后关闭当前终端，再重新打开终端。
@@ -145,7 +145,7 @@ chmod +x 软件Mac一键启动Tauri版.command
 bash 软件Mac环境检查安装脚本.command
 ```
 
-注意：macOS 启动多 pane 需要安装 iTerm2。`Save & Launch` 会通过 `osascript` 控制 iTerm2 创建 split panes，并按每行配置进入工作目录、执行 startupCommand 或 Codex。
+注意：macOS 推荐安装 iTerm2。`Save & Launch` 会优先通过 `osascript` 控制 iTerm2 创建 split panes，并按每行配置进入工作目录、执行 startupCommand 或 Codex；如果没有 iTerm2，会降级用系统 Terminal.app 打开多个窗口。
 
 ## 常用命令
 
@@ -238,7 +238,7 @@ bash scripts/check-env.sh --install
 - 最多 20 个 pane。
 - 每行配置标题、工作目录、Codex 设置。
 - Codex 默认 `yolo`。
-- Prompt delivery 默认 `自动挡/manual`，启动时只运行 Codex，不传长 Prompt。
+- Windows 保持原有 Prompt delivery 兼容；macOS 只显示两种：`自动挡/manual` 启动时只运行 Codex，不传长 Prompt；`自动直传/direct` 会把完整合并 Prompt 作为 Codex 初始参数传入。
 - 每行最右侧 `一键复制` 会复制完整合并 Prompt。
 - Prompt 合并顺序固定为：
 
@@ -257,10 +257,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File <backend>\Start-Terminal
 macOS 启动时会调用内置后端：
 
 ```text
-osascript -> iTerm2 AppleScript
+osascript -> iTerm2 AppleScript；未安装 iTerm2 时降级到 Terminal.app AppleScript
 ```
 
-macOS 后端会读取当前 Tauri 项目的 `templates/`，并支持 `manual`、`file`、`direct`、`auto` 四种 Codex prompt delivery。`file` 和超长 `auto` prompt 会在对应工作目录下写入 `.codex-launcher/` 临时提示词文件。
+macOS 后端会读取当前 Tauri 项目的 `templates/`，并只显示 `manual` 和 `direct` 两种 Codex prompt delivery。`direct` 会把完整合并 Prompt 作为 Codex 初始参数传入；为了避免 AppleScript 超长字符串问题，启动器会用临时 `run-args` 文件做 shell 传输，但不会让 Codex 再去读取 Prompt 文件。Windows 端继续保留旧配置和旧后端的 delivery 兼容。
 
 ## 配置文件
 
@@ -276,7 +276,7 @@ config/layout.json
 config/runtime-layout.json
 ```
 
-原 Windows 后端的配置不会被移动。Windows 上新 GUI 会生成兼容后端的 JSON，再交给后端启动 Windows Terminal；macOS 上则直接由 Tauri 内置后端读取同一份 JSON 并启动 iTerm2。
+原 Windows 后端的配置不会被移动。Windows 上新 GUI 会生成兼容后端的 JSON，再交给后端启动 Windows Terminal；macOS 上则直接由 Tauri 内置后端读取同一份 JSON，优先启动 iTerm2，未安装时降级到 Terminal.app。
 
 ## 常见问题
 
@@ -354,7 +354,7 @@ Windows SDK
 
 ## 后续计划
 
-- macOS 后端：继续完善 iTerm2 窗口尺寸/全屏控制和更多终端应用适配。
+- macOS 后端：继续完善 iTerm2 窗口尺寸/全屏控制和 Terminal.app 兜底体验。
 - 打包发布：生成 Windows 安装包和 macOS `.dmg`。
 - 配置导入导出：方便在多台机器复用 pane 配置。
 - 模板管理：在 GUI 中直接编辑和切换 Prompt 模板。

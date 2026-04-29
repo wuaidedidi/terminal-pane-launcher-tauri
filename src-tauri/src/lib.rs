@@ -2,14 +2,13 @@ use std::{
     env,
     fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
 use serde::Deserialize;
 use tauri::{path::BaseDirectory, Manager};
 
 const MAX_PANES: usize = 20;
-const DIRECT_PROMPT_BUDGET: usize = 16_000;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +85,19 @@ fn looks_like_windows_backend(path: &Path) -> bool {
         && path.join("src").join("TerminalLayout.psm1").is_file()
 }
 
+#[tauri::command]
+fn current_platform() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "unknown"
+    }
+}
+
 fn resolve_windows_backend_path(backend_path: Option<String>) -> Result<PathBuf, String> {
     if let Some(value) = backend_path {
         if !value.trim().is_empty() {
@@ -158,6 +170,61 @@ fn read_windows_backend_config(backend_path: Option<String>) -> Result<String, S
 fn save_config_file(config_json: String) -> Result<(), String> {
     let path = config_path("layout.json")?;
     fs::write(path, config_json).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn write_clipboard_text(text: String) -> Result<(), String> {
+    if cfg!(target_os = "macos") {
+        return write_clipboard_with_command("pbcopy", &[], &text);
+    }
+
+    if cfg!(windows) {
+        return write_clipboard_with_command("clip.exe", &[], &text);
+    }
+
+    for (command, args) in [
+        ("wl-copy", Vec::<&str>::new()),
+        ("xclip", vec!["-selection", "clipboard"]),
+        ("xsel", vec!["--clipboard", "--input"]),
+    ] {
+        if write_clipboard_with_command(command, &args, &text).is_ok() {
+            return Ok(());
+        }
+    }
+
+    Err("No supported clipboard command was found.".to_string())
+}
+
+fn write_clipboard_with_command(command: &str, args: &[&str], text: &str) -> Result<(), String> {
+    let mut child = Command::new(command)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Failed to start {command}: {error}"))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|error| format!("Failed to write clipboard text to {command}: {error}"))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("Failed to wait for {command}: {error}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if stderr.is_empty() {
+            format!("{command} failed to write clipboard text.")
+        } else {
+            stderr
+        })
+    }
 }
 
 #[tauri::command]
@@ -353,8 +420,9 @@ fn uses_codex(pane: &PaneConfig) -> bool {
 fn normalized_delivery(value: &str) -> Result<String, String> {
     let delivery = if is_blank(value) { "manual" } else { value.trim() };
     match delivery {
-        "manual" | "file" | "direct" | "auto" => Ok(delivery.to_string()),
-        _ => Err("Codex prompt delivery must be manual, file, direct, or auto.".to_string()),
+        "manual" | "direct" => Ok(delivery.to_string()),
+        "file" | "auto" => Ok("manual".to_string()),
+        _ => Err("Codex prompt delivery must be manual or direct.".to_string()),
     }
 }
 
@@ -437,17 +505,6 @@ fn write_codex_launcher_file(
     Ok(path)
 }
 
-fn read_prompt_file_instruction(
-    app: &tauri::AppHandle,
-    prompt_file: &Path,
-) -> Result<String, String> {
-    let template = read_template_file(app, None, "prompt-file-instruction.txt").unwrap_or_else(|_| {
-        "Before doing any work, read this complete prompt file:\n\n{0}\n\nTreat it as the full user instruction for this task.".to_string()
-    });
-
-    Ok(template.replace("{0}", &prompt_file.display().to_string()))
-}
-
 fn new_codex_merged_prompt(
     app: &tauri::AppHandle,
     pane: &PaneConfig,
@@ -493,7 +550,7 @@ fn build_codex_shell_command(
         preview_parts.push(argument.to_string());
     }
 
-    let mut delivery = normalized_delivery(&pane.codex_prompt_delivery)?;
+    let delivery = normalized_delivery(&pane.codex_prompt_delivery)?;
     if delivery == "manual" {
         return Ok((
             command_parts.join(" "),
@@ -503,34 +560,8 @@ fn build_codex_shell_command(
     }
 
     let merged_prompt = new_codex_merged_prompt(app, pane)?;
-    if delivery == "auto" {
-        delivery = if merged_prompt.len() <= DIRECT_PROMPT_BUDGET {
-            "direct".to_string()
-        } else {
-            "file".to_string()
-        };
-    }
 
-    let prompt_argument = if delivery == "file" {
-        if preview {
-            format!("<file prompt instruction, {} chars>", merged_prompt.len())
-        } else {
-            let prompt_file = write_codex_launcher_file(
-                working_directory,
-                &pane.title,
-                "prompts",
-                &merged_prompt,
-            )?;
-            let instruction = read_prompt_file_instruction(app, &prompt_file)?;
-            let argument_file = write_codex_launcher_file(
-                working_directory,
-                &pane.title,
-                "run-args",
-                &instruction,
-            )?;
-            format!("\"$(cat {})\"", sh_quote(&argument_file.display().to_string()))
-        }
-    } else if preview {
+    let prompt_argument = if preview {
         format!("<direct prompt, {} chars>", merged_prompt.len())
     } else {
         let argument_file = write_codex_launcher_file(
@@ -543,10 +574,7 @@ fn build_codex_shell_command(
     };
 
     command_parts.push(prompt_argument);
-    preview_parts.push(match delivery.as_str() {
-        "file" => format!("<file prompt instruction, {} chars>", merged_prompt.len()),
-        _ => format!("<direct prompt, {} chars>", merged_prompt.len()),
-    });
+    preview_parts.push(format!("<direct prompt, {} chars>", merged_prompt.len()));
 
     Ok((
         command_parts.join(" "),
@@ -588,17 +616,13 @@ fn mac_default_profile(config: &LauncherConfig) -> String {
     }
 }
 
-fn command_with_profile(action: &str, profile: &str, command: &str) -> String {
+fn action_with_profile(action: &str, profile: &str) -> String {
     if is_blank(profile) {
-        format!(
-            "{action} with default profile command {}",
-            applescript_quote(command)
-        )
+        format!("{action} with default profile")
     } else {
         format!(
-            "{action} with profile {} command {}",
+            "{action} with profile {}",
             applescript_quote(profile),
-            applescript_quote(command)
         )
     }
 }
@@ -740,17 +764,28 @@ fn get_grid_columns<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
 fn build_iterm_applescript(plans: &[MacPanePlan], window_mode: &str, preview: bool) -> String {
     let columns = get_grid_columns(plans);
     let mut lines = vec![
-        "tell application \"iTerm2\"".to_string(),
+        "tell application \"Finder\"".to_string(),
+        "  set desktopBounds to bounds of window of desktop".to_string(),
+        "end tell".to_string(),
+        "set leftEdge to (item 1 of desktopBounds) + 24".to_string(),
+        "set topEdge to (item 2 of desktopBounds) + 48".to_string(),
+        "set rightEdge to (item 3 of desktopBounds) - 24".to_string(),
+        "set bottomEdge to (item 4 of desktopBounds) - 48".to_string(),
+        "tell application id \"com.googlecode.iterm2\"".to_string(),
         "  activate".to_string(),
     ];
 
     let first = &columns[0][0];
+    lines.push(format!("  {}", action_with_profile("create window", &first.profile)));
+    lines.push("  delay 0.2".to_string());
+    lines.push("  set bounds of current window to {leftEdge, topEdge, rightEdge, bottomEdge}".to_string());
+    lines.push("  set pane_0 to current session of current window".to_string());
+    lines.push("  tell pane_0".to_string());
     lines.push(format!(
-        "  set newWindow to ({})",
-        command_with_profile("create window", &first.profile, mac_plan_command(first, preview))
+        "    write text {}",
+        applescript_quote(mac_plan_command(first, preview))
     ));
-    lines.push("  tell newWindow".to_string());
-    lines.push("    set pane_0 to current session".to_string());
+    lines.push("  end tell".to_string());
 
     let mut pane_variable_index = 1usize;
     let mut top_panes = vec!["pane_0".to_string()];
@@ -761,7 +796,13 @@ fn build_iterm_applescript(plans: &[MacPanePlan], window_mode: &str, preview: bo
         lines.push(format!("    tell pane_0"));
         lines.push(format!(
             "      set {variable} to ({})",
-            command_with_profile("split vertically", &plan.profile, mac_plan_command(plan, preview))
+            action_with_profile("split vertically", &plan.profile)
+        ));
+        lines.push("    end tell".to_string());
+        lines.push(format!("    tell {variable}"));
+        lines.push(format!(
+            "      write text {}",
+            applescript_quote(mac_plan_command(plan, preview))
         ));
         lines.push("    end tell".to_string());
         top_panes.push(variable);
@@ -775,7 +816,13 @@ fn build_iterm_applescript(plans: &[MacPanePlan], window_mode: &str, preview: bo
             lines.push(format!("    tell {top_pane}"));
             lines.push(format!(
                 "      set {variable} to ({})",
-                command_with_profile("split horizontally", &plan.profile, mac_plan_command(plan, preview))
+                action_with_profile("split horizontally", &plan.profile)
+            ));
+            lines.push("    end tell".to_string());
+            lines.push(format!("    tell {variable}"));
+            lines.push(format!(
+                "      write text {}",
+                applescript_quote(mac_plan_command(plan, preview))
             ));
             lines.push("    end tell".to_string());
             pane_variable_index += 1;
@@ -788,33 +835,68 @@ fn build_iterm_applescript(plans: &[MacPanePlan], window_mode: &str, preview: bo
         lines.push("    -- Maximized is requested; iTerm2 keeps the normal macOS window controls for this launch.".to_string());
     }
 
-    lines.push("  end tell".to_string());
     lines.push("end tell".to_string());
     lines.join("\n")
 }
 
-fn build_macos_preview(plans: &[MacPanePlan], window_mode: &str, script: &str) -> String {
+fn build_terminal_applescript(plans: &[MacPanePlan], window_mode: &str, preview: bool) -> String {
+    let mut lines = vec![
+        "tell application \"Terminal\"".to_string(),
+        "  activate".to_string(),
+    ];
+
+    for plan in plans {
+        lines.push(format!(
+            "  do script {}",
+            applescript_quote(mac_plan_command(plan, preview))
+        ));
+    }
+
+    if window_mode.trim() == "fullscreen" {
+        lines.push("  -- Fullscreen is requested; Terminal.app opens normal windows through AppleScript.".to_string());
+    } else if window_mode.trim() == "maximized" {
+        lines.push("  -- Maximized is requested; Terminal.app opens normal windows through AppleScript.".to_string());
+    }
+
+    lines.push("end tell".to_string());
+    lines.join("\n")
+}
+
+fn build_macos_preview(
+    plans: &[MacPanePlan],
+    window_mode: &str,
+    script: &str,
+    terminal_name: &str,
+    layout_description: &str,
+) -> String {
     let columns = get_grid_columns(plans);
     let row_count = columns.iter().map(Vec::len).max().unwrap_or(0);
     let mut lines = vec![
-        "macOS iTerm2 launch plan".to_string(),
+        format!("macOS {terminal_name} launch plan"),
         format!("Panes: {}", plans.len()),
-        format!("Layout: {} columns x {} rows", columns.len(), row_count),
+        format!("Layout: {layout_description}"),
         format!("Window mode: {}", if is_blank(window_mode) { "normal" } else { window_mode }),
         String::new(),
     ];
 
+    if terminal_name == "iTerm2" {
+        lines.push(format!("iTerm2 split grid: {} columns x {} rows", columns.len(), row_count));
+        lines.push(String::new());
+    }
+
     for plan in plans {
         lines.push(format!("Pane {}: {}", plan.pane_number, if is_blank(&plan.title) { "(untitled)" } else { &plan.title }));
         lines.push(format!("  Directory: {}", plan.path.display()));
-        lines.push(format!(
-            "  iTerm2 profile: {}",
-            if is_blank(&plan.profile) {
-                "default"
-            } else {
-                &plan.profile
-            }
-        ));
+        if terminal_name == "iTerm2" {
+            lines.push(format!(
+                "  iTerm2 profile: {}",
+                if is_blank(&plan.profile) {
+                    "default"
+                } else {
+                    &plan.profile
+                }
+            ));
+        }
         if let Some(delivery) = &plan.delivery {
             lines.push(format!("  Codex prompt delivery: {delivery}"));
         }
@@ -827,18 +909,19 @@ fn build_macos_preview(plans: &[MacPanePlan], window_mode: &str, script: &str) -
     lines.join("\n")
 }
 
-fn ensure_iterm_available() -> Result<(), String> {
+fn mac_application_available(name: &str, bundle_id: Option<&str>) -> Result<bool, String> {
+    let script = if let Some(bundle_id) = bundle_id {
+        format!(r#"id of application id "{}""#, bundle_id.replace('"', ""))
+    } else {
+        format!(r#"id of application "{}""#, name.replace('"', ""))
+    };
     let output = Command::new("osascript")
         .arg("-e")
-        .arg(r#"id of application "iTerm2""#)
+        .arg(script)
         .output()
-        .map_err(|error| format!("Failed to check iTerm2 availability: {error}"))?;
+        .map_err(|error| format!("Failed to check {name} availability: {error}"))?;
 
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err("iTerm2 is required for macOS split-pane launch. Install iTerm2 and try again.".to_string())
-    }
+    Ok(output.status.success())
 }
 
 fn run_macos_backend(
@@ -858,28 +941,52 @@ fn run_macos_backend(
     } else {
         config.window_mode.trim()
     };
-    let script = build_iterm_applescript(&plans, window_mode, preview);
+    let use_iterm = mac_application_available("iTerm2", Some("com.googlecode.iterm2"))?;
+    let (terminal_name, layout_description, script) = if use_iterm {
+        (
+            "iTerm2",
+            "split panes",
+            build_iterm_applescript(&plans, window_mode, preview),
+        )
+    } else {
+        (
+            "Terminal.app",
+            "separate Terminal windows (iTerm2 not installed)",
+            build_terminal_applescript(&plans, window_mode, preview),
+        )
+    };
 
     if preview {
-        return Ok(build_macos_preview(&plans, window_mode, &script));
+        return Ok(build_macos_preview(
+            &plans,
+            window_mode,
+            &script,
+            terminal_name,
+            layout_description,
+        ));
     }
 
-    ensure_iterm_available()?;
     let output = Command::new("osascript")
         .arg("-e")
         .arg(&script)
         .output()
-        .map_err(|error| format!("Failed to launch iTerm2 through osascript: {error}"))?;
+        .map_err(|error| format!("Failed to launch {terminal_name} through osascript: {error}"))?;
 
     if output.status.success() {
         Ok(format!(
-            "macOS iTerm2 launch started.\n{}",
-            build_macos_preview(&plans, window_mode, &script)
+            "macOS {terminal_name} launch started.\n{}",
+            build_macos_preview(
+                &plans,
+                window_mode,
+                &script,
+                terminal_name,
+                layout_description,
+            )
         ))
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if stderr.is_empty() {
-            Err("iTerm2 AppleScript launch failed.".to_string())
+            Err(format!("{terminal_name} AppleScript launch failed."))
         } else {
             Err(stderr)
         }
@@ -1024,10 +1131,12 @@ fn launch_windows_backend(
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            current_platform,
             detect_windows_backend_path,
             read_config_file,
             read_windows_backend_config,
             save_config_file,
+            write_clipboard_text,
             read_template_text,
             pick_directory,
             preview_windows_backend,
