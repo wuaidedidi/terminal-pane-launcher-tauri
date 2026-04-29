@@ -306,11 +306,11 @@ rm -rf "src-tauri/target/release/bundle/macos/Terminal Pane Launcher.app"
 
 ### 一键复制失败
 
-Tauri 环境下复制不依赖浏览器 Clipboard API，而是调用系统命令：
+Tauri 环境下复制不依赖浏览器 Clipboard API，而是调用平台剪贴板：
 
 ```text
-macOS: pbcopy
-Windows: clip.exe
+macOS: NSPasteboard
+Windows: PowerShell Set-Clipboard
 Linux: wl-copy / xclip / xsel
 ```
 

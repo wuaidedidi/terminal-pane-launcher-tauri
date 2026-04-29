@@ -2,7 +2,7 @@ use std::{
     env,
     fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 use serde::Deserialize;
@@ -183,27 +183,50 @@ fn save_config_file(app: tauri::AppHandle, config_json: String) -> Result<(), St
 
 #[tauri::command]
 fn write_clipboard_text(text: String) -> Result<(), String> {
-    if cfg!(target_os = "macos") {
-        return write_clipboard_with_command("pbcopy", &[], &text);
+    #[cfg(target_os = "macos")]
+    {
+        return write_macos_clipboard_text(&text);
     }
 
-    if cfg!(windows) {
+    #[cfg(windows)]
+    {
         return write_windows_clipboard_text(&text);
     }
 
-    for (command, args) in [
-        ("wl-copy", Vec::<&str>::new()),
-        ("xclip", vec!["-selection", "clipboard"]),
-        ("xsel", vec!["--clipboard", "--input"]),
-    ] {
-        if write_clipboard_with_command(command, &args, &text).is_ok() {
-            return Ok(());
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        for (command, args) in [
+            ("wl-copy", Vec::<&str>::new()),
+            ("xclip", vec!["-selection", "clipboard"]),
+            ("xsel", vec!["--clipboard", "--input"]),
+        ] {
+            if write_clipboard_with_command(command, &args, &text).is_ok() {
+                return Ok(());
+            }
         }
-    }
 
-    Err("No supported clipboard command was found.".to_string())
+        Err("No supported clipboard command was found.".to_string())
+    }
 }
 
+#[cfg(target_os = "macos")]
+fn write_macos_clipboard_text(text: &str) -> Result<(), String> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    use objc2_foundation::NSString;
+
+    let pasteboard = NSPasteboard::generalPasteboard();
+    pasteboard.clearContents();
+
+    let string = NSString::from_str(text);
+    let did_write = unsafe { pasteboard.setString_forType(&string, NSPasteboardTypeString) };
+    if did_write {
+        Ok(())
+    } else {
+        Err("Failed to write text to the macOS pasteboard.".to_string())
+    }
+}
+
+#[cfg(windows)]
 fn write_windows_clipboard_text(text: &str) -> Result<(), String> {
     let temp_path = env::temp_dir().join(format!(
         "terminal-pane-launcher-clipboard-{}.txt",
@@ -242,12 +265,13 @@ fn write_windows_clipboard_text(text: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn write_clipboard_with_command(command: &str, args: &[&str], text: &str) -> Result<(), String> {
     let mut child = Command::new(command)
         .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|error| format!("Failed to start {command}: {error}"))?;
 
@@ -256,6 +280,7 @@ fn write_clipboard_with_command(command: &str, args: &[&str], text: &str) -> Res
         stdin
             .write_all(text.as_bytes())
             .map_err(|error| format!("Failed to write clipboard text to {command}: {error}"))?;
+        drop(stdin);
     }
 
     let output = child
