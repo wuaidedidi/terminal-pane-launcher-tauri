@@ -60,7 +60,12 @@ const deliveryModes = computed<PromptDelivery[]>(() =>
 const codexModes: CodexMode[] = ["", "yolo", "dangerous", "full-auto"];
 
 onMounted(async () => {
-  currentPlatform.value = await getCurrentPlatform();
+  try {
+    currentPlatform.value = await getCurrentPlatform();
+  } catch (error) {
+    currentPlatform.value = "unknown";
+    status.value = `Platform detection skipped: ${formatError(error)}`;
+  }
 
   try {
     if (currentPlatform.value === "windows" && !settings.windowsBackendPath) {
@@ -71,7 +76,12 @@ onMounted(async () => {
     status.value = `Backend auto-detect skipped: ${formatError(error)}`;
   }
 
-  config.value = await loadConfig(currentPlatform.value);
+  try {
+    config.value = await loadConfig(currentPlatform.value);
+  } catch (error) {
+    config.value = repairConfig(null, currentPlatform.value);
+    status.value = `Config load failed, using defaults: ${formatError(error)}`;
+  }
   if (currentPlatform.value === "macos") {
     config.value.windowMode = "maximized";
   }

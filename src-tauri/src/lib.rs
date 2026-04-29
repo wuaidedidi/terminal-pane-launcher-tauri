@@ -80,6 +80,15 @@ fn config_path(file_name: &str) -> Result<PathBuf, String> {
     Ok(path.join(file_name))
 }
 
+fn app_config_path(app: &tauri::AppHandle, file_name: &str) -> Result<PathBuf, String> {
+    let path = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+    Ok(path.join(file_name))
+}
+
 fn looks_like_windows_backend(path: &Path) -> bool {
     path.join("Start-TerminalLayout.ps1").is_file()
         && path.join("src").join("TerminalLayout.psm1").is_file()
@@ -142,8 +151,8 @@ fn detect_windows_backend_path() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn read_config_file() -> Result<String, String> {
-    let path = config_path("layout.json")?;
+fn read_config_file(app: tauri::AppHandle) -> Result<String, String> {
+    let path = app_config_path(&app, "layout.json")?;
     if !path.is_file() {
         return Ok(String::new());
     }
@@ -167,8 +176,8 @@ fn read_windows_backend_config(backend_path: Option<String>) -> Result<String, S
 }
 
 #[tauri::command]
-fn save_config_file(config_json: String) -> Result<(), String> {
-    let path = config_path("layout.json")?;
+fn save_config_file(app: tauri::AppHandle, config_json: String) -> Result<(), String> {
+    let path = app_config_path(&app, "layout.json")?;
     fs::write(path, config_json).map_err(|error| error.to_string())
 }
 
@@ -414,7 +423,9 @@ fn resolve_launcher_path(path: &str) -> PathBuf {
 }
 
 fn uses_codex(pane: &PaneConfig) -> bool {
-    !is_blank(&pane.codex_mode) || !is_blank(&pane.codex_prompt)
+    !is_blank(&pane.codex_mode)
+        || !is_blank(&pane.codex_prompt)
+        || pane.codex_prompt_delivery.trim() == "direct"
 }
 
 fn normalized_delivery(value: &str) -> Result<String, String> {
@@ -584,7 +595,7 @@ fn build_codex_shell_command(
 }
 
 fn wrap_shell_command(path: &Path, title: &str, command: &str) -> String {
-    let mut script = format!("cd {} || exit 1; ", sh_quote(&path.display().to_string()));
+    let mut script = format!("{} cd {} || exit 1; ", mac_shell_bootstrap(), sh_quote(&path.display().to_string()));
 
     if !is_blank(title) {
         script.push_str(&format!(
@@ -633,6 +644,15 @@ fn mac_plan_command(plan: &MacPanePlan, preview: bool) -> &str {
     } else {
         plan.shell_command.as_str()
     }
+}
+
+fn mac_shell_bootstrap() -> &'static str {
+    r#"export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH";
+if [ -r /etc/zprofile ]; then . /etc/zprofile >/dev/null 2>&1 || true; fi;
+if command -v brew >/dev/null 2>&1; then eval "$(brew shellenv)" >/dev/null 2>&1 || true; fi;
+if command -v fnm >/dev/null 2>&1; then eval "$(fnm env --use-on-cd)" >/dev/null 2>&1 || true; fi;
+if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true; fi;
+if command -v nvm >/dev/null 2>&1; then nvm use default >/dev/null 2>&1 || nvm use node >/dev/null 2>&1 || true; fi;"#
 }
 
 fn build_mac_pane_plans(
@@ -729,9 +749,14 @@ fn build_mac_pane_plans(
 
 fn mac_command_exists(command_name: &str) -> bool {
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let script = format!(
+        "{} command -v {}",
+        mac_shell_bootstrap(),
+        sh_quote(command_name)
+    );
     Command::new(shell)
         .arg("-lc")
-        .arg(format!("command -v {}", sh_quote(command_name)))
+        .arg(script)
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)

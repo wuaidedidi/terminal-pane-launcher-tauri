@@ -34,15 +34,30 @@ export async function getCurrentPlatform(): Promise<AppPlatform> {
 }
 
 export async function loadConfig(platform: AppPlatform): Promise<LauncherConfig> {
+  let raw = "";
+
   if (isTauriRuntime()) {
-    const raw = await invoke<string>("read_config_file");
-    if (raw.trim().length > 0) {
-      return repairConfig(parseJsonConfig(raw), platform);
+    try {
+      raw = await invoke<string>("read_config_file");
+    } catch (error) {
+      console.warn("Tauri config read failed; using default config.", error);
     }
   }
 
-  const local = localStorage.getItem(CONFIG_STORAGE_KEY);
-  return repairConfig(local ? parseJsonConfig(local) : null, platform);
+  if (!raw.trim()) {
+    raw = localStorage.getItem(CONFIG_STORAGE_KEY) ?? "";
+  }
+
+  if (!raw.trim()) {
+    return repairConfig(null, platform);
+  }
+
+  try {
+    return repairConfig(parseJsonConfig(raw), platform);
+  } catch (error) {
+    console.warn("Config parse failed; using default config.", error);
+    return repairConfig(null, platform);
+  }
 }
 
 export async function loadWindowsBackendConfig(
