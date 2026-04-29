@@ -89,6 +89,35 @@ fn app_config_path(app: &tauri::AppHandle, file_name: &str) -> Result<PathBuf, S
     Ok(path.join(file_name))
 }
 
+fn codex_run_args_temp_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let path = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?
+        .join("temp")
+        .join("codex-run-args");
+    fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn cleanup_codex_run_args_temp_files(app: &tauri::AppHandle) -> Result<(), String> {
+    let directory = codex_run_args_temp_dir(app)?;
+    for entry in fs::read_dir(&directory)
+        .map_err(|error| format!("Failed to read {}: {}", directory.display(), error))?
+    {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if file_type.is_file() && file_name.ends_with("-run-args.md") {
+            fs::remove_file(entry.path()).map_err(|error| {
+                format!("Failed to remove stale Codex temp file {file_name}: {error}")
+            })?;
+        }
+    }
+    Ok(())
+}
+
 fn looks_like_windows_backend(path: &Path) -> bool {
     path.join("Start-TerminalLayout.ps1").is_file()
         && path.join("src").join("TerminalLayout.psm1").is_file()
@@ -556,22 +585,16 @@ fn unique_suffix() -> String {
 }
 
 fn write_codex_launcher_file(
-    working_directory: &Path,
+    app: &tauri::AppHandle,
     pane_title: &str,
-    category: &str,
     content: &str,
 ) -> Result<PathBuf, String> {
-    let directory = working_directory
-        .join(".codex-launcher")
-        .join(category);
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("Failed to create {}: {}", directory.display(), error))?;
+    let directory = codex_run_args_temp_dir(app)?;
 
     let file_name = format!(
-        "{}-{}-{}.md",
+        "{}-{}-run-args.md",
         unique_suffix(),
-        safe_file_stem(pane_title),
-        category
+        safe_file_stem(pane_title)
     );
     let path = directory.join(file_name);
     fs::write(&path, content)
@@ -613,7 +636,7 @@ fn new_codex_merged_prompt(
 fn build_codex_shell_command(
     app: &tauri::AppHandle,
     pane: &PaneConfig,
-    working_directory: &Path,
+    _working_directory: &Path,
     preview: bool,
 ) -> Result<(String, String, String), String> {
     let mut command_parts = vec!["codex".to_string()];
@@ -639,12 +662,12 @@ fn build_codex_shell_command(
         format!("<direct prompt, {} chars>", merged_prompt.len())
     } else {
         let argument_file = write_codex_launcher_file(
-            working_directory,
+            app,
             &pane.title,
-            "run-args",
             &merged_prompt,
         )?;
-        format!("\"$(cat {})\"", sh_quote(&argument_file.display().to_string()))
+        let quoted_path = sh_quote(&argument_file.display().to_string());
+        format!("\"$(cat {quoted_path}; rm -f {quoted_path})\"")
     };
 
     command_parts.push(prompt_argument);
@@ -1023,6 +1046,9 @@ fn run_macos_backend(
     }
 
     let config = parse_launcher_config(&config_json)?;
+    if !preview {
+        cleanup_codex_run_args_temp_files(&app)?;
+    }
     let plans = build_mac_pane_plans(&app, &config, preview, !skip_path_check)?;
     let window_mode = if is_blank(&config.window_mode) {
         "normal"
@@ -1218,6 +1244,10 @@ fn launch_windows_backend(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            let _ = cleanup_codex_run_args_temp_files(&app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             current_platform,
             detect_windows_backend_path,

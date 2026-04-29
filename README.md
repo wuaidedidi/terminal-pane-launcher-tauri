@@ -113,13 +113,13 @@ macOS 只显示两种模式：
 | `direct` | 自动直传 | 默认。合并完整 Prompt，并作为 Codex 初始参数传入。 |
 | `manual` | 自动挡 | 只启动 Codex，不传长 Prompt，适合手动控制。 |
 
-`自动直传` 不会让 Codex 再去读取 Prompt 文件。为了避免 AppleScript 超长字符串问题，启动器会把完整 Prompt 写入 `.codex-launcher/run-args/` 临时参数文件，然后让 shell 执行：
+`自动直传` 不会让 Codex 再去读取 Prompt 文件。为了避免 AppleScript 超长字符串问题，启动器会把完整 Prompt 写入自身应用配置目录下的 `temp/codex-run-args/` 临时参数文件，然后让 shell 执行：
 
 ```bash
-codex --yolo "$(cat /path/to/run-args.md)"
+codex --yolo "$(cat /path/to/temp/codex-run-args/run-args.md; rm -f /path/to/temp/codex-run-args/run-args.md)"
 ```
 
-对 Codex 来说，收到的是完整初始 Prompt。
+对 Codex 来说，收到的是完整初始 Prompt。临时文件不写入各个项目目录；应用启动和每次实际启动 pane 前只会清理这个目录下由启动器生成的 `*-run-args.md` 文件。
 
 ### 5. app 启动环境
 
