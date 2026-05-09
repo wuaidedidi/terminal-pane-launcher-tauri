@@ -6,124 +6,108 @@
 [![macOS](https://img.shields.io/badge/macOS-iTerm2%20optimized-111111)](https://iterm2.com/)
 [![Windows](https://img.shields.io/badge/Windows-Legacy%20backend%20compatible-0078d4)](https://learn.microsoft.com/windows/terminal/)
 
-Terminal Pane Launcher 是一个基于 `Tauri 2 + Vue 3 + TypeScript + Vite` 的跨平台桌面启动器，用来一次性打开多个项目终端 pane，并为 Codex 工作流准备项目目录、模板提示词和启动命令。
+Terminal Pane Launcher 是一个基于 `Tauri 2 + Vue 3 + TypeScript + Vite` 的跨平台桌面启动器，用来一次性打开多个终端 pane，并为 Codex 工作流准备好项目目录、提示词模板和启动参数。
 
-当前版本重点优化了 macOS + iTerm2 工作流，同时继续兼容原 Windows PowerShell 后端。
+现在的重点有两条：
 
-## Highlights
+1. macOS 体验优先，默认偏向 iTerm2 的 split panes。
+2. 保留 Windows 旧后端兼容，同时新增一个更适合模板化工作的 `query 标注专用` 工作区。
 
-- 最多配置 `20` 个 pane，每个 pane 可独立设置标题、工作目录、启动命令和 Codex 设置。
-- macOS 优先使用 iTerm2 创建大窗口 split panes；未安装 iTerm2 时降级为 Terminal.app 多窗口启动。
-- macOS 默认使用 `自动直传`，把完整合并 Prompt 作为 Codex 初始参数传入。
-- Windows 保持原有 PowerShell 后端兼容，继续调用旧版 `Start-TerminalLayout.ps1`。
-- Prompt 模板随应用打包，支持共享模板和工具模板组合。
-- 一键复制完整合并 Prompt，Tauri 环境下走原生剪贴板，避免 WebView clipboard 权限问题。
-- 打包后可安装到 `/Applications`，支持通过 `Command + Space` 直接启动。
+## 一眼看懂
 
-## Platform Behavior
+- 最多 `20` 个 pane。
+- 每个 pane 都可以单独配置目录、标题、Codex 模式和启动方式。
+- macOS 会优先使用 iTerm2；如果没有 iTerm2，再退回 Terminal.app。
+- Windows 继续兼容旧的 PowerShell 后端，不破坏原有工作流。
+- 支持把 Markdown 提示词批量导入到 pane。
+- 支持 Markdown 模板、锚点和差异值驱动的 query 工作区。
 
-| Platform | Terminal backend | Pane layout | Prompt delivery | Config location |
-| --- | --- | --- | --- | --- |
-| macOS | iTerm2 + AppleScript，Terminal.app fallback | iTerm2 split panes | `自动直传/direct` 默认，`自动挡/manual` 可选 | `~/Library/Application Support/com.local.terminal-pane-launcher/layout.json` |
-| Windows | 原 PowerShell 后端 + Windows Terminal | 由旧后端处理 | 保留旧配置兼容 | Tauri app config + 运行时 JSON |
-| Browser preview | Vite dev server | 不启动终端 | 仅预览 UI | `localStorage` |
+## 工作区
 
-## macOS Workflow
+顶部有两个页签，它们互不干扰：
 
-macOS 是当前主力体验。推荐安装 iTerm2，因为它能稳定创建 split panes，并由 AppleScript 注入启动命令。
+| 工作区 | 用途 | 适合什么场景 |
+| --- | --- | --- |
+| `vibecoding 项目专用` | 继续使用当前的 prompt 拼接式 20 pane 流程 | 需要快速起多个相似 Codex pane 的日常项目 |
+| `query 标注专用` | 使用 Markdown 模板、锚点和 pane 差异值生成启动内容 | 需要为不同项目快速生成定制化启动参数 |
 
-### 1. 检查并安装环境
+`query 标注专用` 里，Codex 的 `resume` 会优先按当前 pane 目录查找最近会话，再用 `codex resume <session-id> <prompt>` 启动。这样模板 prompt 不会被误当成 session id。找不到目录匹配的会话时，会退回 `codex resume --last`。
 
-双击：
+## 快速开始
+
+### macOS
+
+1. 双击环境检查脚本：
 
 ```text
 软件Mac环境检查安装脚本.command
 ```
 
-如果 macOS 提示没有执行权限，可以在项目目录执行：
-
-```bash
-chmod +x 软件Mac环境检查安装脚本.command 软件Mac一键启动Tauri版.command scripts/check-env.sh
-bash 软件Mac环境检查安装脚本.command
-```
-
-脚本会检查并尽量安装：
-
-```text
-Homebrew
-fnm
-Node/npm
-Rust/rustup/cargo
-Xcode Command Line Tools
-iTerm2
-```
-
-### 2. 开发模式启动
-
-开发阶段推荐使用脚本或 Tauri dev 模式，便于查看日志和快速调试：
+2. 开发模式启动：
 
 ```bash
 npm install
 npm run tauri:dev
 ```
 
-也可以双击：
-
-```text
-软件Mac一键启动Tauri版.command
-```
-
-### 3. 打包并安装为应用
-
-打包：
+3. 打包并安装：
 
 ```bash
 npm run tauri:build
+rm -rf "/Applications/Terminal Pane Launcher.app"
+cp -R "src-tauri/target/release/bundle/macos/Terminal Pane Launcher.app" "/Applications/Terminal Pane Launcher.app"
+xattr -dr com.apple.quarantine "/Applications/Terminal Pane Launcher.app" 2>/dev/null || true
 ```
 
-产物位置：
+打包产物会生成在：
 
 ```text
 src-tauri/target/release/bundle/macos/Terminal Pane Launcher.app
 src-tauri/target/release/bundle/dmg/Terminal Pane Launcher_0.1.0_aarch64.dmg
 ```
 
-安装到 `/Applications`：
+### Windows
 
-```bash
-rm -rf "/Applications/Terminal Pane Launcher.app"
-cp -R "src-tauri/target/release/bundle/macos/Terminal Pane Launcher.app" "/Applications/Terminal Pane Launcher.app"
-xattr -dr com.apple.quarantine "/Applications/Terminal Pane Launcher.app" 2>/dev/null || true
-```
-
-安装后可以通过：
+1. 双击环境检查脚本：
 
 ```text
-Command + Space -> Terminal Pane Launcher
+软件Windows环境检查安装脚本.bat
 ```
 
-直接启动。
+2. 开发模式启动：
 
-### 4. macOS Codex delivery
+```powershell
+npm install
+npm run tauri:dev
+```
 
-macOS 只显示两种模式：
+3. 旧后端需要保留这些文件：
 
-| Mode | UI label | Behavior |
+```text
+Start-TerminalLayout.ps1
+src/TerminalLayout.psm1
+```
+
+## macOS 行为
+
+macOS 版本的启动逻辑会先尝试 iTerm2 的 split panes。没有 iTerm2 时，会退回到 Terminal.app 多窗口方案。
+
+### Prompt 传递方式
+
+macOS 有两种 Codex 传递方式：
+
+| Mode | UI 名称 | 行为 |
 | --- | --- | --- |
-| `direct` | 自动直传 | 默认。合并完整 Prompt，并作为 Codex 初始参数传入。 |
-| `manual` | 自动挡 | 只启动 Codex，不传长 Prompt，适合手动控制。 |
+| `direct` | 自动直传 | 把完整合并 Prompt 作为 Codex 初始参数传入 |
+| `manual` | 自动挡 | 只启动 Codex，不传长 Prompt |
 
-`自动直传` 不会让 Codex 再去读取 Prompt 文件。为了避免 AppleScript 超长字符串问题，启动器会把完整 Prompt 写入自身应用配置目录下的 `temp/codex-run-args/` 临时参数文件，然后让 shell 执行：
+为了避免 AppleScript 超长字符串问题，启动器会先把完整 Prompt 写入应用配置目录下的临时文件，再让 shell 读取：
 
 ```bash
 codex --yolo "$(cat /path/to/temp/codex-run-args/run-args.md; rm -f /path/to/temp/codex-run-args/run-args.md)"
 ```
 
-对 Codex 来说，收到的是完整初始 Prompt。临时文件不写入各个项目目录；应用启动和每次实际启动 pane 前只会清理这个目录下由启动器生成的 `*-run-args.md` 文件。
-
-### 5. app 启动环境
-
-从 `/Applications` 或 Spotlight 启动时，macOS 不会继承终端里的 `PATH`。应用内置了 shell bootstrap，会主动加载：
+App 启动时也会自动补齐这些常见环境：
 
 ```text
 /opt/homebrew/bin
@@ -132,71 +116,57 @@ fnm env --use-on-cd
 ~/.nvm/nvm.sh
 ```
 
-这样打包版也能找到通过 `nvm` 或 `fnm` 安装的 `codex`。
+## Prompt 规则
 
-## Windows Workflow
+### Prompt 导入
 
-Windows 端继续兼容原 PowerShell 后端，不强行迁移到 macOS 的 direct 策略。
+点击 `一键导入提示词` 可以从 Markdown 文件批量导入最多 `20` 个用户 Prompt。
 
-### 1. 检查并安装环境
+- 只导入 Prompt 文本，不写 pane 配置。
+- 目录、标题、启用状态、模板和传递方式都会沿用当前面板设置。
+- 每个 Prompt 用独立一行的 `---PROMPT---` 分隔。
+- 超过 `20` 段会直接截断。
 
-双击：
+详细规则见 [`docs/prompt-import-format.md`](docs/prompt-import-format.md)，示例文件见 [`templates/提示词导入示例.md`](templates/提示词导入示例.md)。
 
-```text
-软件Windows环境检查安装脚本.bat
-```
+### Query 模板
 
-脚本会检查：
+`query 标注专用` 使用 Markdown 模板来做定制化启动。
 
-```text
-fnm
-Node/npm
-Rust/rustup/cargo
-Visual Studio Build Tools + C++ 组件
-WebView2 Runtime
-```
+- 模板里使用 `{{anchor}}` 作为锚点占位符。
+- 选中文本后点 `设为锚点`，模板会自动插入锚点。
+- 每个 pane 可以为锚点填写自己的差异值。
+- `选择目录` 后会自动把目录名填到 title。
+- `Codex` 默认是 `yolo`。
+- `resume` 默认按 pane 目录找最近会话。
 
-### 2. 开发模式启动
+如果你只想快速起一批相似 prompt，这个模式会比手工拼每个 pane 更轻。
 
-```powershell
-npm install
-npm run tauri:dev
-```
+## 配置位置
 
-也可以双击：
+当前 Tauri 应用保存 GUI 配置到平台应用配置目录。
 
-```text
-软件Windows一键启动Tauri版.bat
-```
-
-该 bat 会调用：
+### macOS
 
 ```text
-scripts/start-tauri-windows.ps1
+~/Library/Application Support/com.local.terminal-pane-launcher/layout.json
 ```
 
-避免中文路径和 cmd 解析问题。
-
-### 3. Windows 后端目录
-
-Windows 后端应包含：
+### 浏览器预览
 
 ```text
-Start-TerminalLayout.ps1
-src/TerminalLayout.psm1
+localStorage
 ```
 
-Tauri GUI 会自动检测同级目录里的旧后端，也可以在 Advanced 面板里手动指定 Windows backend path。
+### 旧项目内配置
 
-Windows 启动时会调用：
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File <backend>\Start-TerminalLayout.ps1 -ConfigPath <runtime-config>
+```text
+config/layout.json
 ```
 
-## Project Layout
+这个旧路径只作为迁移参考，打包版和当前 Tauri app 运行时不会再依赖项目工作目录。
 
-推荐目录结构：
+## 项目结构
 
 ```text
 workspace/
@@ -219,60 +189,7 @@ workspace/
 
 模板文件会优先从当前项目的 `templates/` 读取，并在打包时进入应用资源目录。
 
-## Prompt Composition
-
-每个 pane 的完整 Prompt 由三部分组成：
-
-```text
-1. User Prompt
-2. Shared Prompt Template
-3. Tool Prompt Template
-```
-
-一键复制会复制同样的合并结果。
-
-## Prompt Import
-
-点击 `一键导入提示词` 可以从 Markdown 文件批量导入最多 20 个用户 Prompt。导入文件只写 Prompt，不写 pane 配置；目录、标题、启用状态、模板和传递方式会继续使用当前面板设置。
-
-导入格式使用独立一行的 `---PROMPT---` 分隔每个 Prompt。详细规则见 [`docs/prompt-import-format.md`](docs/prompt-import-format.md)，示例文件见 [`templates/提示词导入示例.md`](templates/提示词导入示例.md)。
-
-## Workspaces
-
-应用顶部有两个工作区页签：
-
-- `vibecoding 项目专用` 继续使用当前的 prompt 拼接式 20 pane 流程。
-- `query 标注专用` 使用 Markdown 模板、锚点和 pane 差异值来生成启动内容。
-
-在 `query` 工作区里，Codex 的 `resume` 模式会按当前 pane 目录查找最近的 Codex 会话，并用 `codex resume <session-id> <prompt>` 启动；这样 query 模板生成的 prompt 不会被误当成 session id。找不到目录匹配的会话时会退回 `codex resume --last`，但不会追加 prompt。
-
-TODO：如果后续确实需要精确恢复指定对话，再为 `query 标注专用` 增加 session id 选择或输入能力。
-
-## Configuration
-
-当前 Tauri 应用保存 GUI 配置到平台应用配置目录。
-
-macOS：
-
-```text
-~/Library/Application Support/com.local.terminal-pane-launcher/layout.json
-```
-
-浏览器预览模式：
-
-```text
-localStorage
-```
-
-旧的项目内配置：
-
-```text
-config/layout.json
-```
-
-可作为迁移参考，但打包版和当前 Tauri app 运行时不会再依赖项目工作目录，否则通过 Spotlight 启动会不稳定。
-
-## Commands
+## 常用命令
 
 | Command | Description |
 | --- | --- |
@@ -285,41 +202,25 @@ config/layout.json
 | `npm run check:env:windows` | 检查 Windows 环境 |
 | `npm run install:env:windows` | 检查并安装 Windows 环境 |
 
-## Troubleshooting
+## 常见问题
 
-### macOS app 版找不到 Codex
+### macOS app 里找不到 Codex
 
-确认终端里能找到：
+先确认终端本身能找到：
 
 ```bash
 command -v codex
 ```
 
-如果终端里能找到但 app 找不到，请重新打包安装最新版。最新版会自动加载 Homebrew、fnm 和 nvm 环境。
+如果终端里能找到但 app 里找不到，重新打包安装最新版。当前版本会自动加载 Homebrew、fnm 和 nvm 环境。
 
-### macOS Spotlight 里出现两个应用
+### query 的 resume 没有恢复到预期会话
 
-正式使用的是：
-
-```text
-/Applications/Terminal Pane Launcher.app
-```
-
-如果 Spotlight 还显示构建目录里的副本，可以删除：
-
-```bash
-rm -rf "src-tauri/target/release/bundle/macos/Terminal Pane Launcher.app"
-```
+先检查该 pane 目录下是否真的存在 Codex 会话。当前实现会优先找同目录最近会话，再用 `codex resume <session-id> <prompt>` 启动；如果找不到对应会话，会退回 `codex resume --last`。
 
 ### macOS pane 打开了但没有启动 Codex
 
-检查该 pane 的 delivery 是否为：
-
-```text
-自动直传
-```
-
-当前 macOS 逻辑中，只要选择 `自动直传/direct`，即使 `codexMode` 为空，也会启动 Codex 并传入合并 Prompt。
+检查该 pane 的 delivery 是否为 `自动直传`。只有在 `direct` 模式下，macOS 才会把完整 Prompt 直接送给 Codex。
 
 ### 一键复制失败
 
@@ -331,7 +232,7 @@ Windows: PowerShell Set-Clipboard
 Linux: wl-copy / xclip / xsel
 ```
 
-如果仍失败，确认系统命令可用。
+如果仍失败，先确认系统命令可用。
 
 ### Windows npm 或 cargo 找不到
 
@@ -360,14 +261,15 @@ MSVC
 Windows SDK
 ```
 
-## Release Notes
+## 版本说明
 
 当前版本重点：
 
 - macOS 打包版可通过 Spotlight 启动。
 - macOS iTerm2 自动大窗口 split panes。
 - macOS 默认自动直传完整 Prompt 到 Codex 初始参数。
-- macOS app 版自动加载 nvm/fnm/Homebrew 环境。
+- `query 标注专用` 支持模板、锚点、自动选目录、全选有目录 pane 和一键清空。
+- `query 标注专用` 的 resume 会优先按 pane 目录恢复最近会话。
 - Windows 保持旧后端兼容，不改变原有 PowerShell 启动路径。
 - 配置读取失败时会回退默认 20 pane，避免打包版空白页。
 
