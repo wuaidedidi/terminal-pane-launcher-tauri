@@ -4,14 +4,17 @@ import {
   MAX_PANES,
   SHARED_TEMPLATES,
   TOOL_TEMPLATES,
+  createDefaultQueryWorkspace,
   createDefaultPane,
   getDeliveryLabel,
   repairConfig,
+  repairQueryWorkspace,
 } from "./defaults";
 import {
   detectWindowsBackendPath,
   getCurrentPlatform,
   launchWindowsBackend,
+  loadQueryWorkspace,
   loadConfig,
   loadSettings,
   loadWindowsBackendConfig,
@@ -19,6 +22,7 @@ import {
   previewWindowsBackend,
   readTemplateText,
   saveConfig,
+  saveQueryWorkspace,
   saveSettings,
   writeClipboardText,
 } from "./backend";
@@ -29,15 +33,20 @@ import type {
   LauncherConfig,
   PaneConfig,
   PromptDelivery,
+  QueryAnchor,
+  QueryPaneConfig,
+  QueryWorkspaceState,
 } from "./types";
 
 const config = ref<LauncherConfig | null>(null);
+const queryWorkspace = ref<QueryWorkspaceState>(createDefaultQueryWorkspace());
 const currentPlatform = ref<AppPlatform>("unknown");
 const settings = reactive<AppSettings>(loadSettings());
 const previewText = ref("");
 const status = ref("Ready.");
 const isBusy = ref(false);
 const isAdvancedOpen = ref(false);
+const activeWorkspace = ref<"vibecoding" | "query">("vibecoding");
 const editingIndex = ref<number | null>(null);
 const promptDraft = ref("");
 const modeDraft = ref<CodexMode>("yolo");
@@ -45,6 +54,13 @@ const deliveryDraft = ref<PromptDelivery>("manual");
 const sharedTemplateDraft = ref(SHARED_TEMPLATES[0]);
 const toolTemplateDraft = ref(TOOL_TEMPLATES[0]);
 const promptImportInput = ref<HTMLInputElement | null>(null);
+const queryTemplateImportInput = ref<HTMLInputElement | null>(null);
+const queryEditingIndex = ref<number | null>(null);
+const queryAnchorNameDraft = ref("");
+const querySelectedTextDraft = ref("");
+const queryTemplateEditor = ref<HTMLTextAreaElement | null>(null);
+const queryTemplateSelection = ref({ start: 0, end: 0 });
+const queryAnchorValuesDraft = ref<Record<string, string>>({});
 
 const enabledCount = computed(() => config.value?.panes.filter((pane) => pane.enabled).length ?? 0);
 const isMacOs = computed(() => currentPlatform.value === "macos");
@@ -58,7 +74,6 @@ const gridSummary = computed(() => {
 const deliveryModes = computed<PromptDelivery[]>(() =>
   isMacOs.value ? ["manual", "direct"] : ["manual", "file", "direct", "auto"],
 );
-
 const codexModes: CodexMode[] = ["", "yolo", "dangerous", "full-auto"];
 const PROMPT_IMPORT_SEPARATOR = "---PROMPT---";
 
@@ -67,6 +82,17 @@ interface PromptImportParseResult {
   emptyBlockCount: number;
   skippedPromptCount: number;
 }
+
+const queryEnabledCount = computed(
+  () => queryWorkspace.value?.panes.filter((pane) => pane.enabled).length ?? 0,
+);
+const queryGridSummary = computed(() => {
+  const count = queryEnabledCount.value;
+  if (count <= 1) return "1 pane";
+  const columns = Math.min(5, Math.ceil(Math.sqrt(count)));
+  const rows = Math.ceil(count / columns);
+  return `${columns} columns x ${rows} rows`;
+});
 
 onMounted(async () => {
   try {
@@ -113,6 +139,13 @@ onMounted(async () => {
     } catch (error) {
       status.value = `Windows config auto-import skipped: ${formatError(error)}`;
     }
+  }
+
+  try {
+    queryWorkspace.value = await loadQueryWorkspace(currentPlatform.value);
+  } catch (error) {
+    queryWorkspace.value = repairQueryWorkspace(null, currentPlatform.value);
+    status.value = `Query workspace load failed, using defaults: ${formatError(error)}`;
   }
 });
 
@@ -309,6 +342,271 @@ async function clearEnabledPrompts(): Promise<void> {
   }
 }
 
+function getQueryPane(index: number): QueryPaneConfig {
+  if (!queryWorkspace.value) {
+    throw new Error("Query workspace is not loaded.");
+  }
+
+  return queryWorkspace.value.panes[index];
+}
+
+function syncQueryAnchorValues(): void {
+  if (!queryWorkspace.value) return;
+
+  const labels = queryWorkspace.value.anchors.map((anchor) => anchor.label);
+  queryWorkspace.value.panes.forEach((pane) => {
+    labels.forEach((label) => {
+      if (!(label in pane.anchorValues)) {
+        pane.anchorValues[label] = "";
+      }
+    });
+  });
+}
+
+function extractQueryAnchorsFromTemplate(templateText: string): QueryAnchor[] {
+  const matches = [...templateText.matchAll(/\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/g)];
+  const seen = new Set<string>();
+  return matches.flatMap((match) => {
+    const label = match[1];
+    if (seen.has(label)) {
+      return [];
+    }
+    seen.add(label);
+    return [
+      {
+        id: label,
+        label,
+        selectedText: "",
+      },
+    ];
+  });
+}
+
+function slugifyQueryAnchorLabel(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s/\\]+/g, "_")
+    .replace(/[^a-z0-9_-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return slug || "anchor";
+}
+
+async function importQueryTemplateFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+
+  if (!file || !queryWorkspace.value) {
+    return;
+  }
+
+  try {
+    isBusy.value = true;
+    const text = await file.text();
+    queryWorkspace.value.templateName = file.name;
+    queryWorkspace.value.templateText = text.replace(/^\uFEFF/, "");
+    queryWorkspace.value.anchors = extractQueryAnchorsFromTemplate(queryWorkspace.value.templateText);
+    queryWorkspace.value.panes.forEach((pane) => {
+      queryWorkspace.value?.anchors.forEach((anchor) => {
+        if (!(anchor.label in pane.anchorValues)) {
+          pane.anchorValues[anchor.label] = "";
+        }
+      });
+    });
+    syncQueryAnchorValues();
+    previewText.value = `Loaded query template: ${file.name}`;
+    status.value = `Loaded ${file.name} into query workspace.`;
+  } catch (error) {
+    status.value = `Template import failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
+function updateQueryTemplateSelection(): void {
+  const editor = queryTemplateEditor.value;
+  if (!editor) return;
+
+  queryTemplateSelection.value = {
+    start: editor.selectionStart ?? 0,
+    end: editor.selectionEnd ?? 0,
+  };
+  querySelectedTextDraft.value = editor.value.slice(
+    queryTemplateSelection.value.start,
+    queryTemplateSelection.value.end,
+  );
+}
+
+function openQueryAnchorDialog(index: number): void {
+  if (!queryWorkspace.value) return;
+
+  queryEditingIndex.value = index;
+  const pane = queryWorkspace.value.panes[index];
+  queryAnchorValuesDraft.value = { ...pane.anchorValues };
+}
+
+function closeQueryAnchorDialog(): void {
+  queryEditingIndex.value = null;
+  queryAnchorValuesDraft.value = {};
+}
+
+function applyQueryAnchorDialog(): void {
+  if (queryEditingIndex.value === null || !queryWorkspace.value) return;
+
+  const pane = getQueryPane(queryEditingIndex.value);
+  pane.anchorValues = {
+    ...pane.anchorValues,
+    ...queryAnchorValuesDraft.value,
+  };
+  status.value = `Query pane ${queryEditingIndex.value + 1} anchor values updated.`;
+  previewText.value = `Updated anchor values for query pane ${queryEditingIndex.value + 1}.`;
+  closeQueryAnchorDialog();
+}
+
+function applyQueryAnchorFromSelection(): void {
+  if (!queryWorkspace.value) return;
+  const editor = queryTemplateEditor.value;
+  if (!editor) return;
+
+  const { start, end } = queryTemplateSelection.value;
+  const selectedText = querySelectedTextDraft.value.trim();
+  if (!selectedText || start === end) {
+    status.value = "Please select text in the template before creating an anchor.";
+    return;
+  }
+
+  const baseLabel = slugifyQueryAnchorLabel(queryAnchorNameDraft.value || selectedText);
+  let label = baseLabel;
+  let suffix = 2;
+  while (queryWorkspace.value.anchors.some((anchor) => anchor.label === label)) {
+    label = `${baseLabel}_${suffix}`;
+    suffix += 1;
+  }
+
+  const templateText = queryWorkspace.value.templateText;
+  queryWorkspace.value.templateText =
+    templateText.slice(0, start) + `{{${label}}}` + templateText.slice(end);
+  queryWorkspace.value.anchors.push({
+    id: label,
+    label,
+    selectedText,
+  });
+  queryWorkspace.value.panes.forEach((pane) => {
+    pane.anchorValues[label] = "";
+  });
+  queryTemplateSelection.value = { start, end: start + label.length + 4 };
+  previewText.value = `Anchor ${label} added.`;
+  status.value = `Anchor ${label} created.`;
+  closeQueryAnchorDialog();
+}
+
+function renderQueryPrompt(pane: QueryPaneConfig): string {
+  if (!queryWorkspace.value) return "";
+
+  return queryWorkspace.value.anchors.reduce((result, anchor) => {
+    const value = pane.anchorValues[anchor.label]?.trim() || anchor.selectedText || "";
+    return result.replace(new RegExp(`\\{\\{\\s*${anchor.label}\\s*\\}\\}`, "g"), value);
+  }, queryWorkspace.value.templateText);
+}
+
+function buildQueryLaunchConfig(): LauncherConfig | null {
+  if (!queryWorkspace.value) return null;
+
+  const repaired = repairConfig(null, currentPlatform.value);
+  return {
+    ...repaired,
+    panes: repaired.panes.map((defaultPane, index) => {
+      const sourcePane = queryWorkspace.value?.panes[index];
+      const renderedPrompt = sourcePane ? renderQueryPrompt(sourcePane) : "";
+      return {
+        ...defaultPane,
+        ...(sourcePane ?? {}),
+        enabled: sourcePane?.enabled ?? defaultPane.enabled,
+        title: sourcePane?.title ?? defaultPane.title,
+        path: sourcePane?.path ?? defaultPane.path,
+        profile: sourcePane?.profile ?? defaultPane.profile,
+        startupCommand: sourcePane?.startupCommand ?? defaultPane.startupCommand,
+        codexMode: sourcePane?.codexMode ?? defaultPane.codexMode,
+        codexPrompt: renderedPrompt,
+        codexTemplate: "",
+        codexToolTemplate: "",
+        codexPromptDelivery: "direct",
+        codexLaunchMode: sourcePane?.codexLaunchMode ?? "new",
+        codexResumeSessionId: sourcePane?.codexResumeSessionId ?? "",
+        codexPromptStyle: "template",
+      };
+    }),
+  };
+}
+
+async function persistQueryWorkspace(): Promise<boolean> {
+  if (!queryWorkspace.value) return false;
+
+  const knownAnchors = new Map(
+    queryWorkspace.value.anchors.map((anchor) => [anchor.label, anchor] as const),
+  );
+  queryWorkspace.value.anchors = extractQueryAnchorsFromTemplate(queryWorkspace.value.templateText).map(
+    (anchor) => ({
+      ...anchor,
+      selectedText: knownAnchors.get(anchor.label)?.selectedText ?? anchor.selectedText,
+    }),
+  );
+  queryWorkspace.value = repairQueryWorkspace(queryWorkspace.value, currentPlatform.value);
+  syncQueryAnchorValues();
+  await saveQueryWorkspace(queryWorkspace.value, currentPlatform.value);
+  status.value = `Saved query workspace.`;
+  return true;
+}
+
+async function handleQuerySave(): Promise<void> {
+  try {
+    isBusy.value = true;
+    await persistQueryWorkspace();
+  } catch (error) {
+    status.value = `Query save failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
+async function handleQueryPreview(): Promise<void> {
+  try {
+    isBusy.value = true;
+    if (!(await persistQueryWorkspace())) return;
+
+    const launchConfig = buildQueryLaunchConfig();
+    if (!launchConfig) return;
+
+    previewText.value = await previewWindowsBackend(launchConfig, settings);
+    status.value = `Previewed ${queryEnabledCount.value} query pane(s).`;
+  } catch (error) {
+    status.value = `Query preview failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
+async function handleQueryLaunch(): Promise<void> {
+  try {
+    isBusy.value = true;
+    if (!(await persistQueryWorkspace())) return;
+
+    const launchConfig = buildQueryLaunchConfig();
+    if (!launchConfig) return;
+
+    const output = await launchWindowsBackend(launchConfig, settings);
+    previewText.value = output || "Launch command completed.";
+    status.value = `Launched ${queryEnabledCount.value} query pane(s).`;
+  } catch (error) {
+    status.value = `Query launch failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
 async function importWindowsConfig(): Promise<void> {
   try {
     isBusy.value = true;
@@ -472,6 +770,24 @@ async function handleLaunch(): Promise<void> {
 
 <template>
   <main class="shell">
+    <section class="workspace-tabs">
+      <button
+        class="workspace-tab"
+        :class="{ active: activeWorkspace === 'vibecoding' }"
+        @click="activeWorkspace = 'vibecoding'"
+      >
+        vibecoding 项目专用
+      </button>
+      <button
+        class="workspace-tab"
+        :class="{ active: activeWorkspace === 'query' }"
+        @click="activeWorkspace = 'query'"
+      >
+        query 标注专用
+      </button>
+    </section>
+
+    <div v-show="activeWorkspace === 'vibecoding'">
     <section class="hero">
       <div>
         <p class="eyebrow">Tauri cross-platform shell</p>
@@ -659,6 +975,166 @@ async function handleLaunch(): Promise<void> {
           <button class="launch-button" @click="applyCodexDialog">OK</button>
         </footer>
       </section>
+    </div>
+    </div>
+
+    <div v-show="activeWorkspace === 'query'">
+      <section class="hero query-hero">
+        <div>
+          <p class="eyebrow">Template driven workspace</p>
+          <h1>Query Template Launcher</h1>
+          <p class="subtitle">
+            上传一份 Markdown 模板，标注锚点后为最多 20 个 pane 生成不同的启动版本。
+          </p>
+        </div>
+        <div class="stats-card">
+          <span>{{ queryEnabledCount }}</span>
+          <small>enabled panes</small>
+          <strong>{{ queryGridSummary }}</strong>
+        </div>
+      </section>
+
+      <section class="settings-bar query-toolbar">
+        <label>
+          Template file
+          <div class="toolbar-row">
+            <button class="import-button" :disabled="isBusy" @click="queryTemplateImportInput?.click()">
+              上传模板
+            </button>
+            <input v-model="queryWorkspace.templateName" placeholder="Template name" />
+          </div>
+        </label>
+        <label>
+          Anchor name
+          <div class="toolbar-row">
+            <input v-model="queryAnchorNameDraft" placeholder="选中文字后输入锚点名" />
+            <button class="soft-button" :disabled="isBusy" @click="applyQueryAnchorFromSelection">
+              设为锚点
+            </button>
+          </div>
+        </label>
+        <div class="settings-summary">
+          选中模板文字后点击设为锚点，模板会自动插入 <code v-pre>{{anchor}}</code> 占位符。
+        </div>
+      </section>
+
+      <input
+        ref="queryTemplateImportInput"
+        class="file-input"
+        type="file"
+        accept=".md,text/markdown"
+        @change="importQueryTemplateFile"
+      />
+
+      <section class="query-workbench" v-if="queryWorkspace">
+        <div class="query-template-panel">
+          <label>
+            Template markdown
+            <textarea
+              ref="queryTemplateEditor"
+              v-model="queryWorkspace.templateText"
+              class="query-template-editor"
+              placeholder="Upload a markdown template or edit it here."
+              @mouseup="updateQueryTemplateSelection"
+              @keyup="updateQueryTemplateSelection"
+              @select="updateQueryTemplateSelection"
+            />
+          </label>
+        </div>
+
+        <aside class="query-anchor-panel">
+          <h2>Anchors</h2>
+          <div v-if="queryWorkspace.anchors.length === 0" class="query-empty">
+            还没有锚点，先在左侧模板中选中文字再添加。
+          </div>
+          <div v-else class="query-anchor-list">
+            <div class="query-anchor-item" v-for="anchor in queryWorkspace.anchors" :key="anchor.id">
+              <strong>{{ anchor.label }}</strong>
+              <small>{{ anchor.selectedText || "selected text" }}</small>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="pane-board query-pane-board" v-if="queryWorkspace">
+        <div class="pane-header query-pane-header">
+          <span>#</span>
+          <span>Enabled</span>
+          <span>Title</span>
+          <span>Working directory</span>
+          <span>Codex</span>
+          <span>Mode</span>
+          <span>Anchors</span>
+          <span>Resume</span>
+          <span>Launch</span>
+        </div>
+
+        <div
+          class="pane-row query-pane-row"
+          v-for="(pane, index) in queryWorkspace.panes"
+          :key="index"
+        >
+          <span class="pane-index">{{ index + 1 }}</span>
+          <input type="checkbox" v-model="pane.enabled" />
+          <input v-model="pane.title" />
+          <input v-model="pane.path" placeholder="Choose project folder first" />
+          <select v-model="pane.codexMode">
+            <option v-for="mode in codexModes" :key="mode" :value="mode">
+              {{ mode || "off" }}
+            </option>
+          </select>
+          <select v-model="pane.codexLaunchMode">
+            <option value="new">new</option>
+            <option value="resume">resume</option>
+          </select>
+          <button class="soft-button" @click="openQueryAnchorDialog(index)">Edit</button>
+          <input
+            v-model="pane.codexResumeSessionId"
+            placeholder="Session id or keep blank for --last"
+          />
+          <button class="copy-button" :disabled="isBusy" @click="handleQueryLaunch">
+            Run All
+          </button>
+        </div>
+      </section>
+
+      <footer class="action-bar">
+        <span>{{ status }}</span>
+        <div>
+          <button :disabled="isBusy" @click="handleQuerySave">Save</button>
+          <button :disabled="isBusy" @click="handleQueryPreview">Preview</button>
+          <button class="launch-button" :disabled="isBusy" @click="handleQueryLaunch">
+            Save & Launch
+          </button>
+        </div>
+      </footer>
+
+      <div class="modal-backdrop" v-if="queryEditingIndex !== null">
+        <section class="modal">
+          <header>
+            <div>
+              <p class="eyebrow">Pane {{ queryEditingIndex + 1 }}</p>
+              <h2>Anchor values</h2>
+            </div>
+            <button class="icon-button" @click="closeQueryAnchorDialog">x</button>
+          </header>
+
+          <div class="modal-grid" v-if="queryWorkspace">
+            <label v-for="anchor in queryWorkspace.anchors" :key="anchor.id">
+              {{ anchor.label }}
+              <input
+                v-model="queryAnchorValuesDraft[anchor.label]"
+                :placeholder="anchor.selectedText || anchor.label"
+              />
+            </label>
+          </div>
+
+          <footer>
+            <button @click="closeQueryAnchorDialog">Cancel</button>
+            <button class="launch-button" @click="applyQueryAnchorDialog">OK</button>
+          </footer>
+        </section>
+      </div>
     </div>
   </main>
 </template>

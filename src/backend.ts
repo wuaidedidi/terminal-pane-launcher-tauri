@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppPlatform, AppSettings, LauncherConfig } from "./types";
-import { createDefaultSettings, repairConfig } from "./defaults";
+import type { AppPlatform, AppSettings, LauncherConfig, QueryWorkspaceState } from "./types";
+import { createDefaultSettings, repairConfig, repairQueryWorkspace } from "./defaults";
 
 const CONFIG_STORAGE_KEY = "terminal-pane-launcher.config";
 const SETTINGS_STORAGE_KEY = "terminal-pane-launcher.settings";
+const QUERY_STORAGE_KEY = "terminal-pane-launcher.query-workspace";
 
 function parseJsonConfig(raw: string): Partial<LauncherConfig> {
   return JSON.parse(raw.replace(/^\uFEFF/, "")) as Partial<LauncherConfig>;
@@ -102,6 +103,47 @@ export function loadSettings(): AppSettings {
 
 export function saveSettings(settings: AppSettings): void {
   localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings, null, 2));
+}
+
+export async function loadQueryWorkspace(platform: AppPlatform): Promise<QueryWorkspaceState> {
+  let raw = "";
+
+  if (isTauriRuntime()) {
+    try {
+      raw = await invoke<string>("read_query_workspace_file");
+    } catch (error) {
+      console.warn("Tauri query workspace read failed; using default workspace.", error);
+    }
+  }
+
+  if (!raw.trim()) {
+    raw = localStorage.getItem(QUERY_STORAGE_KEY) ?? "";
+  }
+
+  if (!raw.trim()) {
+    return repairQueryWorkspace(null, platform);
+  }
+
+  try {
+    return repairQueryWorkspace(parseJsonConfig(raw) as Partial<QueryWorkspaceState>, platform);
+  } catch (error) {
+    console.warn("Query workspace parse failed; using default workspace.", error);
+    return repairQueryWorkspace(null, platform);
+  }
+}
+
+export async function saveQueryWorkspace(
+  workspace: QueryWorkspaceState,
+  platform: AppPlatform,
+): Promise<void> {
+  const repaired = repairQueryWorkspace(workspace, platform);
+  const json = JSON.stringify(repaired, null, 2);
+
+  if (isTauriRuntime()) {
+    await invoke("save_query_workspace_file", { workspaceJson: json });
+  } else {
+    localStorage.setItem(QUERY_STORAGE_KEY, json);
+  }
 }
 
 export async function readTemplateText(

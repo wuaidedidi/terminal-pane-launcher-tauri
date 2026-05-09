@@ -237,6 +237,15 @@ workspace/
 
 导入格式使用独立一行的 `---PROMPT---` 分隔每个 Prompt。详细规则见 [`docs/prompt-import-format.md`](docs/prompt-import-format.md)，示例文件见 [`templates/提示词导入示例.md`](templates/提示词导入示例.md)。
 
+## Workspaces
+
+应用顶部有两个工作区页签：
+
+- `vibecoding 项目专用` 继续使用当前的 prompt 拼接式 20 pane 流程。
+- `query 标注专用` 使用 Markdown 模板、锚点和 pane 差异值来生成启动内容。
+
+在 `query` 工作区里，Codex 默认仍然支持 `resume --last`，也可以为单个 pane 手动填写 session id。
+
 ## Configuration
 
 当前 Tauri 应用保存 GUI 配置到平台应用配置目录。

@@ -44,6 +44,12 @@ struct PaneConfig {
     codex_tool_template: String,
     #[serde(default)]
     codex_prompt_delivery: String,
+    #[serde(default)]
+    codex_launch_mode: String,
+    #[serde(default)]
+    codex_resume_session_id: String,
+    #[serde(default)]
+    codex_prompt_style: String,
 }
 
 #[derive(Clone, Debug)]
@@ -190,6 +196,16 @@ fn read_config_file(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn read_query_workspace_file(app: tauri::AppHandle) -> Result<String, String> {
+    let path = app_config_path(&app, "query-workspace.json")?;
+    if !path.is_file() {
+        return Ok(String::new());
+    }
+
+    fs::read_to_string(path).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn read_windows_backend_config(backend_path: Option<String>) -> Result<String, String> {
     let backend = resolve_windows_backend_path(backend_path)?;
     let path = backend.join("config").join("layout.json");
@@ -208,6 +224,12 @@ fn read_windows_backend_config(backend_path: Option<String>) -> Result<String, S
 fn save_config_file(app: tauri::AppHandle, config_json: String) -> Result<(), String> {
     let path = app_config_path(&app, "layout.json")?;
     fs::write(path, config_json).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_query_workspace_file(app: tauri::AppHandle, workspace_json: String) -> Result<(), String> {
+    let path = app_config_path(&app, "query-workspace.json")?;
+    fs::write(path, workspace_json).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -518,6 +540,8 @@ fn uses_codex(pane: &PaneConfig) -> bool {
     !is_blank(&pane.codex_mode)
         || !is_blank(&pane.codex_prompt)
         || pane.codex_prompt_delivery.trim() == "direct"
+        || pane.codex_launch_mode.trim() == "resume"
+        || pane.codex_prompt_style.trim() == "template"
 }
 
 fn normalized_delivery(value: &str) -> Result<String, String> {
@@ -526,6 +550,22 @@ fn normalized_delivery(value: &str) -> Result<String, String> {
         "manual" | "direct" => Ok(delivery.to_string()),
         "file" | "auto" => Ok("manual".to_string()),
         _ => Err("Codex prompt delivery must be manual or direct.".to_string()),
+    }
+}
+
+fn normalized_launch_mode(value: &str) -> String {
+    if value.trim() == "resume" {
+        "resume".to_string()
+    } else {
+        "new".to_string()
+    }
+}
+
+fn normalized_prompt_style(value: &str) -> String {
+    if value.trim() == "template" {
+        "template".to_string()
+    } else {
+        "composed".to_string()
     }
 }
 
@@ -606,6 +646,10 @@ fn new_codex_merged_prompt(
     app: &tauri::AppHandle,
     pane: &PaneConfig,
 ) -> Result<String, String> {
+    if normalized_prompt_style(&pane.codex_prompt_style) == "template" {
+        return Ok(pane.codex_prompt.trim().to_string());
+    }
+
     let template_name = if is_blank(&pane.codex_template) {
         "全栈的提示词留档.md"
     } else {
@@ -642,9 +686,26 @@ fn build_codex_shell_command(
     let mut command_parts = vec!["codex".to_string()];
     let mut preview_parts = vec!["codex".to_string()];
 
+    let launch_mode = normalized_launch_mode(&pane.codex_launch_mode);
+    if launch_mode == "resume" {
+        command_parts.push("resume".to_string());
+        preview_parts.push("resume".to_string());
+    }
+
     for argument in codex_mode_args(&pane.codex_mode) {
         command_parts.push(argument.to_string());
         preview_parts.push(argument.to_string());
+    }
+
+    if launch_mode == "resume" {
+        let session_id = pane.codex_resume_session_id.trim();
+        if session_id.is_empty() {
+            command_parts.push("--last".to_string());
+            preview_parts.push("--last".to_string());
+        } else {
+            command_parts.push(session_id.to_string());
+            preview_parts.push(session_id.to_string());
+        }
     }
 
     let delivery = normalized_delivery(&pane.codex_prompt_delivery)?;
@@ -1252,8 +1313,10 @@ pub fn run() {
             current_platform,
             detect_windows_backend_path,
             read_config_file,
+            read_query_workspace_file,
             read_windows_backend_config,
             save_config_file,
+            save_query_workspace_file,
             write_clipboard_text,
             read_template_text,
             pick_directory,

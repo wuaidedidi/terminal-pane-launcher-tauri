@@ -1,4 +1,12 @@
-import type { AppPlatform, AppSettings, LauncherConfig, PaneConfig, PromptDelivery } from "./types";
+import type {
+  AppPlatform,
+  AppSettings,
+  LauncherConfig,
+  PaneConfig,
+  PromptDelivery,
+  QueryPaneConfig,
+  QueryWorkspaceState,
+} from "./types";
 
 export const MAX_PANES = 20;
 
@@ -49,6 +57,27 @@ export function createDefaultPane(
     codexTemplate: SHARED_TEMPLATES[0],
     codexToolTemplate: TOOL_TEMPLATES[0],
     codexPromptDelivery: platform === "macos" ? "direct" : "manual",
+    codexLaunchMode: "new",
+    codexResumeSessionId: "",
+    codexPromptStyle: "composed",
+  };
+}
+
+export function createDefaultQueryPane(
+  index: number,
+  enabled = index === 0,
+  platform: AppPlatform = "windows",
+): QueryPaneConfig {
+  return {
+    enabled,
+    title: `Pane ${index + 1}`,
+    path: "",
+    profile: "",
+    startupCommand: "",
+    codexMode: "",
+    codexLaunchMode: "new",
+    codexResumeSessionId: "",
+    anchorValues: {},
   };
 }
 
@@ -87,6 +116,56 @@ export function repairConfig(
         sourcePanes[index]?.codexPromptDelivery,
         platform,
       ),
+      codexLaunchMode: sourcePanes[index]?.codexLaunchMode === "resume" ? "resume" : "new",
+      codexResumeSessionId: sourcePanes[index]?.codexResumeSessionId ?? "",
+      codexPromptStyle: sourcePanes[index]?.codexPromptStyle === "template" ? "template" : "composed",
+    })),
+  };
+}
+
+export function createDefaultQueryWorkspace(
+  platform: AppPlatform = "windows",
+): QueryWorkspaceState {
+  return {
+    schemaVersion: 1,
+    templateName: "",
+    templateText: "",
+    anchors: [],
+    panes: Array.from({ length: MAX_PANES }, (_, index) =>
+      createDefaultQueryPane(index, index === 0, platform),
+    ),
+  };
+}
+
+export function repairQueryWorkspace(
+  input: Partial<QueryWorkspaceState> | null | undefined,
+  platform: AppPlatform = "windows",
+): QueryWorkspaceState {
+  const defaults = createDefaultQueryWorkspace(platform);
+  const sourcePanes = Array.isArray(input?.panes) ? input.panes : [];
+  const anchors = Array.isArray(input?.anchors) ? input.anchors : [];
+
+  return {
+    schemaVersion: 1,
+    templateName: input?.templateName ?? defaults.templateName,
+    templateText: input?.templateText ?? defaults.templateText,
+    anchors: anchors.map((anchor, index) => ({
+      id: anchor?.id ?? `anchor-${index + 1}`,
+      label: anchor?.label ?? `anchor_${index + 1}`,
+      selectedText: anchor?.selectedText ?? "",
+    })),
+    panes: defaults.panes.map((defaultPane, index) => ({
+      ...defaultPane,
+      ...(sourcePanes[index] ?? {}),
+      codexLaunchMode: sourcePanes[index]?.codexLaunchMode === "resume" ? "resume" : "new",
+      codexResumeSessionId: sourcePanes[index]?.codexResumeSessionId ?? "",
+      anchorValues: {
+        ...anchors.reduce<Record<string, string>>((acc, anchor) => {
+          acc[anchor.label] = "";
+          return acc;
+        }, {}),
+        ...(sourcePanes[index]?.anchorValues ?? {}),
+      },
     })),
   };
 }

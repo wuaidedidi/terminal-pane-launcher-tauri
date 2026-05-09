@@ -90,6 +90,25 @@ textarea {
   padding: 30px 0;
 }
 
+.workspace-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.workspace-tab {
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.64);
+  font-weight: 800;
+}
+
+.workspace-tab.active {
+  color: #fffaf0;
+  background: linear-gradient(135deg, var(--green), var(--green-deep));
+}
+
 .hero,
 .settings-bar,
 .advanced-panel,
@@ -200,8 +219,77 @@ h2 {
   white-space: nowrap;
 }
 
+.toolbar-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.toolbar-row input {
+  min-width: 0;
+}
+
 .file-input {
   display: none;
+}
+
+.query-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.query-template-panel,
+.query-anchor-panel {
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 18px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.query-template-editor {
+  min-height: 420px;
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+.query-anchor-panel h2 {
+  margin-bottom: 14px;
+  font-size: 20px;
+}
+
+.query-anchor-list {
+  display: grid;
+  gap: 10px;
+}
+
+.query-anchor-item {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.query-anchor-item small,
+.query-empty {
+  color: var(--muted);
+}
+
+.query-empty {
+  padding: 12px 0;
+}
+
+.query-pane-board {
+  margin-top: 18px;
+}
+
+.query-pane-header,
+.query-pane-row {
+  grid-template-columns: 42px 76px 148px minmax(220px, 1fr) 88px 88px 110px 160px 110px;
 }
 
 .advanced-panel {
@@ -389,4 +477,26 @@ label {
   min-height: 310px;
   margin-bottom: 18px;
   font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+@media (max-width: 1200px) {
+  .query-workbench {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 840px) {
+  .workspace-tabs {
+    flex-wrap: wrap;
+  }
+
+  .settings-bar,
+  .advanced-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .query-pane-header,
+  .query-pane-row {
+    grid-template-columns: 42px 76px 120px minmax(180px, 1fr) 78px 78px 98px 140px 92px;
+  }
 }
