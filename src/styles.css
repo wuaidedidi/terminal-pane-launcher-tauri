@@ -291,8 +291,8 @@ h2 {
 
 .query-pane-header,
 .query-pane-row {
-  min-width: 1320px;
-  grid-template-columns: 42px 76px 150px minmax(300px, 1fr) 88px 92px 92px 110px 220px;
+  min-width: 1100px;
+  grid-template-columns: 42px 76px 150px minmax(300px, 1fr) 88px 92px 92px 110px;
 }
 
 .advanced-panel {
@@ -500,7 +500,7 @@ label {
 
   .query-pane-header,
   .query-pane-row {
-    min-width: 1320px;
-    grid-template-columns: 42px 76px 150px minmax(300px, 1fr) 88px 92px 92px 110px 220px;
+    min-width: 1100px;
+    grid-template-columns: 42px 76px 150px minmax(300px, 1fr) 88px 92px 92px 110px;
   }
 }

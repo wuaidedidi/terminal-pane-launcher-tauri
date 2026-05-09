@@ -242,6 +242,75 @@ function showValidationErrors(errors: string[]): void {
   status.value = "Please choose a working directory for every enabled pane.";
 }
 
+function isValuePane(pane: PaneConfig, index: number): boolean {
+  return (
+    pane.title.trim() !== `Pane ${index + 1}` ||
+    pane.path.trim() !== "" ||
+    pane.profile.trim() !== "" ||
+    pane.startupCommand.trim() !== "" ||
+    pane.codexMode !== "" ||
+    pane.codexPrompt.trim() !== "" ||
+    pane.codexLaunchMode !== "new" ||
+    pane.codexResumeSessionId.trim() !== ""
+  );
+}
+
+function isValueQueryPane(pane: QueryPaneConfig, index: number): boolean {
+  return (
+    pane.title.trim() !== `Pane ${index + 1}` ||
+    pane.path.trim() !== "" ||
+    pane.profile.trim() !== "" ||
+    pane.startupCommand.trim() !== "" ||
+    pane.codexMode !== "yolo" ||
+    pane.codexLaunchMode !== "new" ||
+    Object.values(pane.anchorValues).some((value) => value.trim() !== "")
+  );
+}
+
+async function selectValuePanes(): Promise<void> {
+  if (!config.value) return;
+
+  try {
+    isBusy.value = true;
+    let selectedCount = 0;
+    config.value.panes.forEach((pane, index) => {
+      pane.enabled = isValuePane(pane, index);
+      if (pane.enabled) {
+        selectedCount += 1;
+      }
+    });
+    await saveConfig(config.value, currentPlatform.value);
+    status.value = `Selected ${selectedCount} value pane(s).`;
+    previewText.value = `Selected ${selectedCount} pane(s) with non-default content.`;
+  } catch (error) {
+    status.value = `Select value panes failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
+async function selectValueQueryPanes(): Promise<void> {
+  if (!queryWorkspace.value) return;
+
+  try {
+    isBusy.value = true;
+    let selectedCount = 0;
+    queryWorkspace.value.panes.forEach((pane, index) => {
+      pane.enabled = isValueQueryPane(pane, index);
+      if (pane.enabled) {
+        selectedCount += 1;
+      }
+    });
+    await saveQueryWorkspace(queryWorkspace.value, currentPlatform.value);
+    status.value = `Selected ${selectedCount} query value pane(s).`;
+    previewText.value = `Selected ${selectedCount} query pane(s) with non-default content.`;
+  } catch (error) {
+    status.value = `Select query value panes failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
 function parsePromptImportMarkdown(raw: string): PromptImportParseResult {
   const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
   const sections = normalized.split(/^[ \t]*---PROMPT---[ \t]*$/gm);
@@ -348,9 +417,11 @@ async function clearEnabledQueryPanes(): Promise<void> {
   if (!queryWorkspace.value) return;
 
   const workspace = queryWorkspace.value;
-  const enabledPanes = workspace.panes.filter((pane) => pane.enabled);
-  if (enabledPanes.length === 0) {
-    status.value = "No enabled query panes to reset.";
+  const valuePaneIndexes = workspace.panes.flatMap((pane, index) =>
+    isValueQueryPane(pane, index) || pane.enabled ? [index] : [],
+  );
+  if (valuePaneIndexes.length === 0) {
+    status.value = "No query panes to reset.";
     return;
   }
 
@@ -360,19 +431,17 @@ async function clearEnabledQueryPanes(): Promise<void> {
       acc[anchor.label] = "";
       return acc;
     }, {});
-    workspace.panes.forEach((pane, index) => {
-      if (pane.enabled) {
-        workspace.panes[index] = {
-          ...createDefaultQueryPane(index, false, currentPlatform.value),
-          anchorValues: { ...anchorValues },
-        };
-      }
+    valuePaneIndexes.forEach((index) => {
+      workspace.panes[index] = {
+        ...createDefaultQueryPane(index, false, currentPlatform.value),
+        anchorValues: { ...anchorValues },
+      };
     });
     queryWorkspace.value = repairQueryWorkspace(workspace, currentPlatform.value);
     syncQueryAnchorValues();
     await saveQueryWorkspace(queryWorkspace.value, currentPlatform.value);
-    previewText.value = `Reset ${enabledPanes.length} enabled query pane(s) to default state.`;
-    status.value = `Reset ${enabledPanes.length} enabled query pane(s).`;
+    previewText.value = `Reset ${valuePaneIndexes.length} query pane(s) to default state.`;
+    status.value = `Reset ${valuePaneIndexes.length} query pane(s).`;
   } catch (error) {
     status.value = `Query reset failed: ${formatError(error)}`;
   } finally {
@@ -573,7 +642,7 @@ function buildQueryLaunchConfig(): LauncherConfig | null {
         codexToolTemplate: "",
         codexPromptDelivery: "direct",
         codexLaunchMode: sourcePane?.codexLaunchMode ?? "new",
-        codexResumeSessionId: sourcePane?.codexResumeSessionId ?? "",
+        codexResumeSessionId: "",
         codexPromptStyle: "template",
       };
     }),
@@ -883,6 +952,9 @@ async function handleLaunch(): Promise<void> {
         Enabled panes must choose real project directories before launch.
       </div>
       <div class="settings-actions">
+        <button class="soft-button" :disabled="isBusy" @click="selectValuePanes">
+          全选有值 pane
+        </button>
         <button class="soft-button" :disabled="isBusy" @click="clearEnabledPrompts">
           清空启用提示词
         </button>
@@ -1077,6 +1149,9 @@ async function handleLaunch(): Promise<void> {
           </div>
         </label>
         <div class="settings-summary">
+          <button class="soft-button" :disabled="isBusy" @click="selectValueQueryPanes">
+            全选有值 pane
+          </button>
           <button class="soft-button" :disabled="isBusy" @click="clearEnabledQueryPanes">
             一键清空
           </button>
@@ -1131,7 +1206,6 @@ async function handleLaunch(): Promise<void> {
           <span>Codex</span>
           <span>Mode</span>
           <span>Anchors</span>
-          <span>Resume</span>
         </div>
 
         <div
@@ -1160,10 +1234,6 @@ async function handleLaunch(): Promise<void> {
             <option value="resume">resume</option>
           </select>
           <button class="soft-button" @click="openQueryAnchorDialog(index)">Edit</button>
-          <input
-            v-model="pane.codexResumeSessionId"
-            placeholder="Session id or keep blank for --last"
-          />
         </div>
       </section>
 

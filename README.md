@@ -244,7 +244,9 @@ workspace/
 - `vibecoding 项目专用` 继续使用当前的 prompt 拼接式 20 pane 流程。
 - `query 标注专用` 使用 Markdown 模板、锚点和 pane 差异值来生成启动内容。
 
-在 `query` 工作区里，Codex 默认仍然支持 `resume --last`，也可以为单个 pane 手动填写 session id。
+在 `query` 工作区里，Codex 的 `resume` 模式默认使用当前 pane 目录下的 `codex resume --last`，界面暂不提供手动填写 session id。
+
+TODO：如果后续确实需要精确恢复指定对话，再为 `query 标注专用` 增加 session id 选择或输入能力。
 
 ## Configuration
 

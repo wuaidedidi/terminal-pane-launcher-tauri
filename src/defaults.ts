@@ -159,7 +159,7 @@ export function repairQueryWorkspace(
       ...(sourcePanes[index] ?? {}),
       codexMode: sourcePanes[index]?.codexMode || defaultPane.codexMode,
       codexLaunchMode: sourcePanes[index]?.codexLaunchMode === "resume" ? "resume" : "new",
-      codexResumeSessionId: sourcePanes[index]?.codexResumeSessionId ?? "",
+      codexResumeSessionId: "",
       anchorValues: {
         ...anchors.reduce<Record<string, string>>((acc, anchor) => {
           acc[anchor.label] = "";
