@@ -242,17 +242,8 @@ function showValidationErrors(errors: string[]): void {
   status.value = "Please choose a working directory for every enabled pane.";
 }
 
-function isValuePane(pane: PaneConfig, index: number): boolean {
-  return (
-    pane.title.trim() !== `Pane ${index + 1}` ||
-    pane.path.trim() !== "" ||
-    pane.profile.trim() !== "" ||
-    pane.startupCommand.trim() !== "" ||
-    pane.codexMode !== "" ||
-    pane.codexPrompt.trim() !== "" ||
-    pane.codexLaunchMode !== "new" ||
-    pane.codexResumeSessionId.trim() !== ""
-  );
+function hasSelectableWorkingDirectory(pane: PaneConfig | QueryPaneConfig): boolean {
+  return !isMissingWorkingDirectory(pane.path);
 }
 
 function isValueQueryPane(pane: QueryPaneConfig, index: number): boolean {
@@ -273,15 +264,15 @@ async function selectValuePanes(): Promise<void> {
   try {
     isBusy.value = true;
     let selectedCount = 0;
-    config.value.panes.forEach((pane, index) => {
-      pane.enabled = isValuePane(pane, index);
+    config.value.panes.forEach((pane) => {
+      pane.enabled = hasSelectableWorkingDirectory(pane);
       if (pane.enabled) {
         selectedCount += 1;
       }
     });
     await saveConfig(config.value, currentPlatform.value);
-    status.value = `Selected ${selectedCount} value pane(s).`;
-    previewText.value = `Selected ${selectedCount} pane(s) with non-default content.`;
+    status.value = `Selected ${selectedCount} pane(s) with working directories.`;
+    previewText.value = `Selected ${selectedCount} pane(s) that have real project directories.`;
   } catch (error) {
     status.value = `Select value panes failed: ${formatError(error)}`;
   } finally {
@@ -295,15 +286,15 @@ async function selectValueQueryPanes(): Promise<void> {
   try {
     isBusy.value = true;
     let selectedCount = 0;
-    queryWorkspace.value.panes.forEach((pane, index) => {
-      pane.enabled = isValueQueryPane(pane, index);
+    queryWorkspace.value.panes.forEach((pane) => {
+      pane.enabled = hasSelectableWorkingDirectory(pane);
       if (pane.enabled) {
         selectedCount += 1;
       }
     });
     await saveQueryWorkspace(queryWorkspace.value, currentPlatform.value);
-    status.value = `Selected ${selectedCount} query value pane(s).`;
-    previewText.value = `Selected ${selectedCount} query pane(s) with non-default content.`;
+    status.value = `Selected ${selectedCount} query pane(s) with working directories.`;
+    previewText.value = `Selected ${selectedCount} query pane(s) that have real project directories.`;
   } catch (error) {
     status.value = `Select query value panes failed: ${formatError(error)}`;
   } finally {
@@ -953,7 +944,7 @@ async function handleLaunch(): Promise<void> {
       </div>
       <div class="settings-actions">
         <button class="soft-button" :disabled="isBusy" @click="selectValuePanes">
-          全选有值 pane
+          全选有目录 pane
         </button>
         <button class="soft-button" :disabled="isBusy" @click="clearEnabledPrompts">
           清空启用提示词
@@ -1150,7 +1141,7 @@ async function handleLaunch(): Promise<void> {
         </label>
         <div class="settings-summary">
           <button class="soft-button" :disabled="isBusy" @click="selectValueQueryPanes">
-            全选有值 pane
+            全选有目录 pane
           </button>
           <button class="soft-button" :disabled="isBusy" @click="clearEnabledQueryPanes">
             一键清空
