@@ -231,6 +231,12 @@ workspace/
 
 一键复制会复制同样的合并结果。
 
+## Prompt Import
+
+点击 `一键导入提示词` 可以从 Markdown 文件批量导入最多 20 个用户 Prompt。导入文件只写 Prompt，不写 pane 配置；目录、标题、启用状态、模板和传递方式会继续使用当前面板设置。
+
+导入格式使用独立一行的 `---PROMPT---` 分隔每个 Prompt。详细规则见 [`docs/prompt-import-format.md`](docs/prompt-import-format.md)，示例文件见 [`templates/提示词导入示例.md`](templates/提示词导入示例.md)。
+
 ## Configuration
 
 当前 Tauri 应用保存 GUI 配置到平台应用配置目录。

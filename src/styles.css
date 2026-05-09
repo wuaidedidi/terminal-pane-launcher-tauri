@@ -171,7 +171,7 @@ h2 {
 
 .settings-bar {
   display: grid;
-  grid-template-columns: 220px minmax(320px, 1fr) 160px;
+  grid-template-columns: 220px minmax(320px, 1fr) minmax(460px, max-content);
   gap: 16px;
   align-items: end;
   margin-top: 18px;
@@ -188,6 +188,20 @@ h2 {
 
 .advanced-toggle {
   justify-self: stretch;
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.settings-actions button {
+  white-space: nowrap;
+}
+
+.file-input {
+  display: none;
 }
 
 .advanced-panel {

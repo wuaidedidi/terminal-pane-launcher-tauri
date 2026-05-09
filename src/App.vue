@@ -4,6 +4,7 @@ import {
   MAX_PANES,
   SHARED_TEMPLATES,
   TOOL_TEMPLATES,
+  createDefaultPane,
   getDeliveryLabel,
   repairConfig,
 } from "./defaults";
@@ -43,6 +44,7 @@ const modeDraft = ref<CodexMode>("yolo");
 const deliveryDraft = ref<PromptDelivery>("manual");
 const sharedTemplateDraft = ref(SHARED_TEMPLATES[0]);
 const toolTemplateDraft = ref(TOOL_TEMPLATES[0]);
+const promptImportInput = ref<HTMLInputElement | null>(null);
 
 const enabledCount = computed(() => config.value?.panes.filter((pane) => pane.enabled).length ?? 0);
 const isMacOs = computed(() => currentPlatform.value === "macos");
@@ -58,6 +60,13 @@ const deliveryModes = computed<PromptDelivery[]>(() =>
 );
 
 const codexModes: CodexMode[] = ["", "yolo", "dangerous", "full-auto"];
+const PROMPT_IMPORT_SEPARATOR = "---PROMPT---";
+
+interface PromptImportParseResult {
+  prompts: string[];
+  emptyBlockCount: number;
+  skippedPromptCount: number;
+}
 
 onMounted(async () => {
   try {
@@ -198,6 +207,108 @@ function showValidationErrors(errors: string[]): void {
   status.value = "Please choose a working directory for every enabled pane.";
 }
 
+function parsePromptImportMarkdown(raw: string): PromptImportParseResult {
+  const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+  const sections = normalized.split(/^[ \t]*---PROMPT---[ \t]*$/gm);
+  const promptSections = sections.slice(1);
+  const nonEmptyPrompts = promptSections
+    .map((section) => section.trim())
+    .filter(Boolean);
+
+  return {
+    prompts: nonEmptyPrompts.slice(0, MAX_PANES),
+    emptyBlockCount: promptSections.length - nonEmptyPrompts.length,
+    skippedPromptCount: Math.max(0, nonEmptyPrompts.length - MAX_PANES),
+  };
+}
+
+function openPromptImportPicker(): void {
+  promptImportInput.value?.click();
+}
+
+async function handlePromptImportFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+
+  if (!file || !config.value) {
+    return;
+  }
+  const currentConfig = config.value;
+
+  if (!file.name.toLowerCase().endsWith(".md")) {
+    status.value = "Prompt import needs a .md file.";
+    return;
+  }
+
+  try {
+    isBusy.value = true;
+    const parsed = parsePromptImportMarkdown(await file.text());
+
+    if (parsed.prompts.length === 0) {
+      status.value = `No prompt blocks found. Use ${PROMPT_IMPORT_SEPARATOR} as the separator.`;
+      previewText.value = [
+        `Prompt import skipped: ${file.name}`,
+        `Use one ${PROMPT_IMPORT_SEPARATOR} line before each prompt block.`,
+      ].join("\n");
+      return;
+    }
+
+    parsed.prompts.forEach((prompt, index) => {
+      if (currentConfig.panes[index]) {
+        currentConfig.panes[index].codexPrompt = prompt;
+      }
+    });
+
+    await saveConfig(currentConfig, currentPlatform.value);
+
+    previewText.value = [
+      `Prompt import: ${file.name}`,
+      `Imported: ${parsed.prompts.length}`,
+      parsed.skippedPromptCount > 0 ? `Skipped extra prompts: ${parsed.skippedPromptCount}` : "",
+      parsed.emptyBlockCount > 0 ? `Skipped empty prompt blocks: ${parsed.emptyBlockCount}` : "",
+      "Only imported prompt text was updated. Other pane settings and non-imported prompts were kept.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    status.value =
+      parsed.skippedPromptCount > 0
+        ? `Imported ${parsed.prompts.length} prompt(s), skipped ${parsed.skippedPromptCount} extra prompt(s).`
+        : `Imported ${parsed.prompts.length} prompt(s) from ${file.name}.`;
+  } catch (error) {
+    status.value = `Prompt import failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
+async function clearEnabledPrompts(): Promise<void> {
+  if (!config.value) return;
+
+  const currentConfig = config.value;
+  const enabledPanes = currentConfig.panes.filter((pane) => pane.enabled);
+  if (enabledPanes.length === 0) {
+    status.value = "No enabled panes to reset.";
+    return;
+  }
+
+  try {
+    isBusy.value = true;
+    currentConfig.panes.forEach((pane, index) => {
+      if (pane.enabled) {
+        currentConfig.panes[index] = createDefaultPane(index, false, currentPlatform.value);
+      }
+    });
+    await saveConfig(currentConfig, currentPlatform.value);
+    previewText.value = `Reset ${enabledPanes.length} enabled pane(s) to default blank state.`;
+    status.value = `Reset ${enabledPanes.length} enabled pane(s) to default state.`;
+  } catch (error) {
+    status.value = `Reset failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
 async function importWindowsConfig(): Promise<void> {
   try {
     isBusy.value = true;
@@ -220,13 +331,24 @@ async function chooseWorkingDirectory(index: number): Promise<void> {
       return;
     }
 
-    getPane(index).path = selected;
-    status.value = `Pane ${index + 1} working directory selected.`;
+    const pane = getPane(index);
+    const title = getDirectoryTitle(selected);
+    pane.path = selected;
+    if (title) {
+      pane.title = title;
+    }
+    status.value = title
+      ? `Pane ${index + 1} directory selected and title set to ${title}.`
+      : `Pane ${index + 1} working directory selected.`;
   } catch (error) {
     status.value = `Directory selection failed: ${formatError(error)}`;
   } finally {
     isBusy.value = false;
   }
+}
+
+function getDirectoryTitle(path: string): string {
+  return path.trim().replace(/[\\/]+$/, "").split(/[\\/]/).pop()?.trim() ?? "";
 }
 
 function openCodexDialog(index: number): void {
@@ -381,9 +503,24 @@ async function handleLaunch(): Promise<void> {
       <div class="settings-summary">
         Enabled panes must choose real project directories before launch.
       </div>
-      <button class="soft-button advanced-toggle" @click="isAdvancedOpen = !isAdvancedOpen">
-        {{ isAdvancedOpen ? "Hide advanced" : "Advanced" }}
-      </button>
+      <div class="settings-actions">
+        <button class="soft-button" :disabled="isBusy" @click="clearEnabledPrompts">
+          清空启用提示词
+        </button>
+        <button class="import-button" :disabled="isBusy" @click="openPromptImportPicker">
+          一键导入提示词
+        </button>
+        <button class="soft-button advanced-toggle" @click="isAdvancedOpen = !isAdvancedOpen">
+          {{ isAdvancedOpen ? "Hide advanced" : "Advanced" }}
+        </button>
+      </div>
+      <input
+        ref="promptImportInput"
+        class="file-input"
+        type="file"
+        accept=".md,text/markdown"
+        @change="handlePromptImportFile"
+      />
     </section>
 
     <section class="advanced-panel" v-if="isAdvancedOpen">
