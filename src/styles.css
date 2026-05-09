@@ -285,11 +285,14 @@ h2 {
 
 .query-pane-board {
   margin-top: 18px;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .query-pane-header,
 .query-pane-row {
-  grid-template-columns: 42px 76px 148px minmax(220px, 1fr) 88px 88px 110px 160px 110px;
+  min-width: 1320px;
+  grid-template-columns: 42px 76px 150px minmax(300px, 1fr) 88px 92px 92px 110px 220px;
 }
 
 .advanced-panel {
@@ -497,6 +500,7 @@ label {
 
   .query-pane-header,
   .query-pane-row {
-    grid-template-columns: 42px 76px 120px minmax(180px, 1fr) 78px 78px 98px 140px 92px;
+    min-width: 1320px;
+    grid-template-columns: 42px 76px 150px minmax(300px, 1fr) 88px 92px 92px 110px 220px;
   }
 }

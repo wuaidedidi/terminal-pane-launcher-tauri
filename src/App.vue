@@ -75,6 +75,7 @@ const deliveryModes = computed<PromptDelivery[]>(() =>
   isMacOs.value ? ["manual", "direct"] : ["manual", "file", "direct", "auto"],
 );
 const codexModes: CodexMode[] = ["", "yolo", "dangerous", "full-auto"];
+const queryCodexModes: Exclude<CodexMode, "">[] = ["yolo", "dangerous", "full-auto"];
 const PROMPT_IMPORT_SEPARATOR = "---PROMPT---";
 
 interface PromptImportParseResult {
@@ -529,7 +530,7 @@ function buildQueryLaunchConfig(): LauncherConfig | null {
         path: sourcePane?.path ?? defaultPane.path,
         profile: sourcePane?.profile ?? defaultPane.profile,
         startupCommand: sourcePane?.startupCommand ?? defaultPane.startupCommand,
-        codexMode: sourcePane?.codexMode ?? defaultPane.codexMode,
+        codexMode: sourcePane?.codexMode || "yolo",
         codexPrompt: renderedPrompt,
         codexTemplate: "",
         codexToolTemplate: "",
@@ -602,6 +603,31 @@ async function handleQueryLaunch(): Promise<void> {
     status.value = `Launched ${queryEnabledCount.value} query pane(s).`;
   } catch (error) {
     status.value = `Query launch failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
+async function chooseQueryWorkingDirectory(index: number): Promise<void> {
+  try {
+    isBusy.value = true;
+    const selected = await pickDirectory();
+    if (!selected) {
+      status.value = `Query pane ${index + 1} directory selection cancelled.`;
+      return;
+    }
+
+    const pane = getQueryPane(index);
+    const title = getDirectoryTitle(selected);
+    pane.path = selected;
+    if (title) {
+      pane.title = title;
+    }
+    status.value = title
+      ? `Query pane ${index + 1} directory selected and title set to ${title}.`
+      : `Query pane ${index + 1} working directory selected.`;
+  } catch (error) {
+    status.value = `Query directory selection failed: ${formatError(error)}`;
   } finally {
     isBusy.value = false;
   }
@@ -1062,11 +1088,11 @@ async function handleLaunch(): Promise<void> {
           <span>Enabled</span>
           <span>Title</span>
           <span>Working directory</span>
+          <span>Browse</span>
           <span>Codex</span>
           <span>Mode</span>
           <span>Anchors</span>
           <span>Resume</span>
-          <span>Launch</span>
         </div>
 
         <div
@@ -1078,9 +1104,16 @@ async function handleLaunch(): Promise<void> {
           <input type="checkbox" v-model="pane.enabled" />
           <input v-model="pane.title" />
           <input v-model="pane.path" placeholder="Choose project folder first" />
+          <button
+            class="soft-button browse-button"
+            :disabled="isBusy"
+            @click="chooseQueryWorkingDirectory(index)"
+          >
+            Browse
+          </button>
           <select v-model="pane.codexMode">
-            <option v-for="mode in codexModes" :key="mode" :value="mode">
-              {{ mode || "off" }}
+            <option v-for="mode in queryCodexModes" :key="mode" :value="mode">
+              {{ mode }}
             </option>
           </select>
           <select v-model="pane.codexLaunchMode">
@@ -1092,9 +1125,6 @@ async function handleLaunch(): Promise<void> {
             v-model="pane.codexResumeSessionId"
             placeholder="Session id or keep blank for --last"
           />
-          <button class="copy-button" :disabled="isBusy" @click="handleQueryLaunch">
-            Run All
-          </button>
         </div>
       </section>
 
@@ -1104,7 +1134,7 @@ async function handleLaunch(): Promise<void> {
           <button :disabled="isBusy" @click="handleQuerySave">Save</button>
           <button :disabled="isBusy" @click="handleQueryPreview">Preview</button>
           <button class="launch-button" :disabled="isBusy" @click="handleQueryLaunch">
-            Save & Launch
+            一键启动
           </button>
         </div>
       </footer>

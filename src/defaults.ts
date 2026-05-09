@@ -74,7 +74,7 @@ export function createDefaultQueryPane(
     path: "",
     profile: "",
     startupCommand: "",
-    codexMode: "",
+    codexMode: "yolo",
     codexLaunchMode: "new",
     codexResumeSessionId: "",
     anchorValues: {},
@@ -157,6 +157,7 @@ export function repairQueryWorkspace(
     panes: defaults.panes.map((defaultPane, index) => ({
       ...defaultPane,
       ...(sourcePanes[index] ?? {}),
+      codexMode: sourcePanes[index]?.codexMode || defaultPane.codexMode,
       codexLaunchMode: sourcePanes[index]?.codexLaunchMode === "resume" ? "resume" : "new",
       codexResumeSessionId: sourcePanes[index]?.codexResumeSessionId ?? "",
       anchorValues: {
