@@ -6,6 +6,7 @@ import {
   TOOL_TEMPLATES,
   createDefaultQueryWorkspace,
   createDefaultPane,
+  createDefaultQueryPane,
   getDeliveryLabel,
   repairConfig,
   repairQueryWorkspace,
@@ -338,6 +339,42 @@ async function clearEnabledPrompts(): Promise<void> {
     status.value = `Reset ${enabledPanes.length} enabled pane(s) to default state.`;
   } catch (error) {
     status.value = `Reset failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
+async function clearEnabledQueryPanes(): Promise<void> {
+  if (!queryWorkspace.value) return;
+
+  const workspace = queryWorkspace.value;
+  const enabledPanes = workspace.panes.filter((pane) => pane.enabled);
+  if (enabledPanes.length === 0) {
+    status.value = "No enabled query panes to reset.";
+    return;
+  }
+
+  try {
+    isBusy.value = true;
+    const anchorValues = workspace.anchors.reduce<Record<string, string>>((acc, anchor) => {
+      acc[anchor.label] = "";
+      return acc;
+    }, {});
+    workspace.panes.forEach((pane, index) => {
+      if (pane.enabled) {
+        workspace.panes[index] = {
+          ...createDefaultQueryPane(index, false, currentPlatform.value),
+          anchorValues: { ...anchorValues },
+        };
+      }
+    });
+    queryWorkspace.value = repairQueryWorkspace(workspace, currentPlatform.value);
+    syncQueryAnchorValues();
+    await saveQueryWorkspace(queryWorkspace.value, currentPlatform.value);
+    previewText.value = `Reset ${enabledPanes.length} enabled query pane(s) to default state.`;
+    status.value = `Reset ${enabledPanes.length} enabled query pane(s).`;
+  } catch (error) {
+    status.value = `Query reset failed: ${formatError(error)}`;
   } finally {
     isBusy.value = false;
   }
@@ -1040,7 +1077,9 @@ async function handleLaunch(): Promise<void> {
           </div>
         </label>
         <div class="settings-summary">
-          选中模板文字后点击设为锚点，模板会自动插入 <code v-pre>{{anchor}}</code> 占位符。
+          <button class="soft-button" :disabled="isBusy" @click="clearEnabledQueryPanes">
+            一键清空
+          </button>
         </div>
       </section>
 
