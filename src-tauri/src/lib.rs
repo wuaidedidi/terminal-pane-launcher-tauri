@@ -1,6 +1,7 @@
 use std::{
     env,
     fs,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
@@ -642,6 +643,63 @@ fn write_codex_launcher_file(
     Ok(path)
 }
 
+fn collect_codex_session_files(directory: &Path, files: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_codex_session_files(&path, files);
+        } else if path.extension().and_then(|value| value.to_str()) == Some("jsonl") {
+            files.push(path);
+        }
+    }
+}
+
+fn normalized_session_cwd(path: &Path) -> String {
+    path.canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn read_codex_session_meta(path: &Path) -> Option<(String, String)> {
+    let file = fs::File::open(path).ok()?;
+    let mut lines = BufReader::new(file).lines();
+    let first_line = lines.next()?.ok()?;
+    let value: serde_json::Value = serde_json::from_str(&first_line).ok()?;
+    let payload = value.get("payload")?;
+    let id = payload.get("id")?.as_str()?.to_string();
+    let cwd = payload.get("cwd")?.as_str()?.to_string();
+    Some((id, cwd))
+}
+
+fn find_latest_codex_session_id_for_cwd(working_directory: &Path) -> Option<String> {
+    let sessions_directory = home_dir()?.join(".codex").join("sessions");
+    let target_cwd = normalized_session_cwd(working_directory);
+    let mut files = Vec::new();
+    collect_codex_session_files(&sessions_directory, &mut files);
+    files.sort_by(|left, right| {
+        let left_modified = left
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH);
+        let right_modified = right
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH);
+        right_modified.cmp(&left_modified)
+    });
+
+    files.into_iter().find_map(|path| {
+        let (id, cwd) = read_codex_session_meta(&path)?;
+        (normalized_session_cwd(Path::new(&cwd)) == target_cwd).then_some(id)
+    })
+}
+
 fn new_codex_merged_prompt(
     app: &tauri::AppHandle,
     pane: &PaneConfig,
@@ -680,11 +738,12 @@ fn new_codex_merged_prompt(
 fn build_codex_shell_command(
     app: &tauri::AppHandle,
     pane: &PaneConfig,
-    _working_directory: &Path,
+    working_directory: &Path,
     preview: bool,
 ) -> Result<(String, String, String), String> {
     let mut command_parts = vec!["codex".to_string()];
     let mut preview_parts = vec!["codex".to_string()];
+    let mut can_pass_resume_prompt = true;
 
     let launch_mode = normalized_launch_mode(&pane.codex_launch_mode);
     if launch_mode == "resume" {
@@ -700,8 +759,14 @@ fn build_codex_shell_command(
     if launch_mode == "resume" {
         let session_id = pane.codex_resume_session_id.trim();
         if session_id.is_empty() {
-            command_parts.push("--last".to_string());
-            preview_parts.push("--last".to_string());
+            if let Some(resolved_session_id) = find_latest_codex_session_id_for_cwd(working_directory) {
+                command_parts.push(resolved_session_id.clone());
+                preview_parts.push(format!("<latest session for cwd: {resolved_session_id}>"));
+            } else {
+                command_parts.push("--last".to_string());
+                preview_parts.push("--last".to_string());
+                can_pass_resume_prompt = false;
+            }
         } else {
             command_parts.push(session_id.to_string());
             preview_parts.push(session_id.to_string());
@@ -718,6 +783,15 @@ fn build_codex_shell_command(
     }
 
     let merged_prompt = new_codex_merged_prompt(app, pane)?;
+
+    if launch_mode == "resume" && !can_pass_resume_prompt {
+        preview_parts.push("<prompt omitted because no cwd session id was found>".to_string());
+        return Ok((
+            command_parts.join(" "),
+            preview_parts.join(" "),
+            delivery,
+        ));
+    }
 
     let prompt_argument = if preview {
         format!("<direct prompt, {} chars>", merged_prompt.len())
