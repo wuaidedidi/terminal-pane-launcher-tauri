@@ -20,6 +20,7 @@ Terminal Pane Launcher 是一个基于 `Tauri 2 + Vue 3 + TypeScript + Vite` 的
 - macOS 会优先使用 iTerm2；如果没有 iTerm2，再退回 Terminal.app。
 - Windows 继续兼容旧的 PowerShell 后端，不破坏原有工作流。
 - 支持把 Markdown 提示词批量导入到 pane。
+- 支持 vibecoding 全局尾部自定义拼接词。
 - 支持 Markdown 模板、锚点和差异值驱动的 query 工作区。
 
 ## 工作区
@@ -128,6 +129,12 @@ fnm env --use-on-cd
 - 超过 `20` 段会直接截断。
 
 详细规则见 [`docs/prompt-import-format.md`](docs/prompt-import-format.md)，示例文件见 [`templates/提示词导入示例.md`](templates/提示词导入示例.md)。
+
+### 最后的自定拼接词
+
+`vibecoding 项目专用` 可以通过 `最后的自定拼接词` 保存一段全局尾部 Prompt。它会拼接到每个 pane 最终 Prompt 的最后面，适合临时追加统一约束、验收标准或本轮注意事项。
+
+点击 `清空启用提示词` 时，这个全局尾部 Prompt 也会一起清空。
 
 ### Query 模板
 

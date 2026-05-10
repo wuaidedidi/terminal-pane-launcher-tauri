@@ -19,6 +19,8 @@ struct LauncherConfig {
     #[serde(default)]
     default_profile: String,
     #[serde(default)]
+    final_custom_prompt: String,
+    #[serde(default)]
     panes: Vec<PaneConfig>,
 }
 
@@ -703,6 +705,7 @@ fn find_latest_codex_session_id_for_cwd(working_directory: &Path) -> Option<Stri
 fn new_codex_merged_prompt(
     app: &tauri::AppHandle,
     pane: &PaneConfig,
+    final_custom_prompt: &str,
 ) -> Result<String, String> {
     if normalized_prompt_style(&pane.codex_prompt_style) == "template" {
         return Ok(pane.codex_prompt.trim().to_string());
@@ -731,6 +734,10 @@ fn new_codex_merged_prompt(
     parts.push(shared.trim().to_string());
     parts.push(format!("## Tool Prompt Template: {tool_template_name}"));
     parts.push(tool.trim().to_string());
+    if !is_blank(final_custom_prompt) {
+        parts.push("## Final Custom Prompt".to_string());
+        parts.push(final_custom_prompt.trim().to_string());
+    }
 
     Ok(parts.join("\n\n"))
 }
@@ -738,6 +745,7 @@ fn new_codex_merged_prompt(
 fn build_codex_shell_command(
     app: &tauri::AppHandle,
     pane: &PaneConfig,
+    final_custom_prompt: &str,
     working_directory: &Path,
     preview: bool,
 ) -> Result<(String, String, String), String> {
@@ -782,7 +790,7 @@ fn build_codex_shell_command(
         ));
     }
 
-    let merged_prompt = new_codex_merged_prompt(app, pane)?;
+    let merged_prompt = new_codex_merged_prompt(app, pane, final_custom_prompt)?;
 
     if launch_mode == "resume" && !can_pass_resume_prompt {
         preview_parts.push("<prompt omitted because no cwd session id was found>".to_string());
@@ -927,7 +935,7 @@ fn build_mac_pane_plans(
         let (inner_command, preview_inner_command, delivery) = if uses_codex(pane) {
             needs_codex = true;
             let (command, preview_command, delivery) =
-                build_codex_shell_command(app, pane, &path, preview)?;
+                build_codex_shell_command(app, pane, &config.final_custom_prompt, &path, preview)?;
             (command, preview_command, Some(delivery))
         } else if !is_blank(&pane.startup_command) {
             (

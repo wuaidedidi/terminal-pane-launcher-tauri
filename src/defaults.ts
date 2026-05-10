@@ -89,6 +89,7 @@ export function createDefaultConfig(platform: AppPlatform = "windows"): Launcher
     windowMode: "maximized",
     layoutMode: "balancedGrid",
     defaultProfile: platform === "macos" ? "" : "Windows PowerShell",
+    finalCustomPrompt: "",
     panes: Array.from({ length: MAX_PANES }, (_, index) =>
       createDefaultPane(index, enableFirstPane && index === 0, platform),
     ),
@@ -107,6 +108,7 @@ export function repairConfig(
     windowMode: input?.windowMode ?? defaults.windowMode,
     layoutMode: "balancedGrid",
     defaultProfile: input?.defaultProfile ?? defaults.defaultProfile,
+    finalCustomPrompt: input?.finalCustomPrompt ?? defaults.finalCustomPrompt,
     panes: defaults.panes.map((defaultPane, index) => ({
       ...defaultPane,
       ...(sourcePanes[index] ?? {}),

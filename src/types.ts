@@ -26,6 +26,7 @@ export interface LauncherConfig {
   windowMode: WindowMode;
   layoutMode: "balancedGrid";
   defaultProfile: string;
+  finalCustomPrompt: string;
   panes: PaneConfig[];
 }
 

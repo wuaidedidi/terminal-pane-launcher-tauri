@@ -50,6 +50,7 @@ const isAdvancedOpen = ref(false);
 const activeWorkspace = ref<"vibecoding" | "query">("vibecoding");
 const editingIndex = ref<number | null>(null);
 const promptDraft = ref("");
+const finalPromptDraft = ref("");
 const modeDraft = ref<CodexMode>("yolo");
 const deliveryDraft = ref<PromptDelivery>("manual");
 const sharedTemplateDraft = ref(SHARED_TEMPLATES[0]);
@@ -65,6 +66,7 @@ const queryAnchorValuesDraft = ref<Record<string, string>>({});
 const isQueryTemplateDialogOpen = ref(false);
 const queryTemplateNameDraft = ref("");
 const queryTemplateTextDraft = ref("");
+const isFinalPromptDialogOpen = ref(false);
 
 const enabledCount = computed(() => config.value?.panes.filter((pane) => pane.enabled).length ?? 0);
 const isMacOs = computed(() => currentPlatform.value === "macos");
@@ -397,9 +399,10 @@ async function clearEnabledPrompts(): Promise<void> {
         currentConfig.panes[index] = createDefaultPane(index, false, currentPlatform.value);
       }
     });
+    currentConfig.finalCustomPrompt = "";
     await saveConfig(currentConfig, currentPlatform.value);
-    previewText.value = `Reset ${enabledPanes.length} enabled pane(s) to default blank state.`;
-    status.value = `Reset ${enabledPanes.length} enabled pane(s) to default state.`;
+    previewText.value = `Reset ${enabledPanes.length} enabled pane(s) and cleared the final custom prompt.`;
+    status.value = `Reset ${enabledPanes.length} enabled pane(s) and final prompt.`;
   } catch (error) {
     status.value = `Reset failed: ${formatError(error)}`;
   } finally {
@@ -846,6 +849,39 @@ function closeCodexDialog(): void {
   promptDraft.value = "";
 }
 
+function openFinalPromptDialog(): void {
+  if (!config.value) return;
+
+  finalPromptDraft.value = config.value.finalCustomPrompt;
+  isFinalPromptDialogOpen.value = true;
+}
+
+function closeFinalPromptDialog(): void {
+  isFinalPromptDialogOpen.value = false;
+  finalPromptDraft.value = "";
+}
+
+async function applyFinalPromptDialog(): Promise<void> {
+  if (!config.value) return;
+
+  try {
+    isBusy.value = true;
+    config.value.finalCustomPrompt = finalPromptDraft.value;
+    await saveConfig(config.value, currentPlatform.value);
+    previewText.value = config.value.finalCustomPrompt.trim()
+      ? `Saved final custom prompt. Length: ${config.value.finalCustomPrompt.trim().length}`
+      : "Cleared final custom prompt.";
+    status.value = config.value.finalCustomPrompt.trim()
+      ? "Final custom prompt saved."
+      : "Final custom prompt cleared.";
+    closeFinalPromptDialog();
+  } catch (error) {
+    status.value = `Final prompt save failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
 function applyCodexDialog(): void {
   if (editingIndex.value === null || !config.value) return;
 
@@ -871,6 +907,9 @@ async function copyMergedPrompt(index: number): Promise<void> {
       pane.codexPrompt.trim() ? `## User Prompt\n${pane.codexPrompt.trim()}` : "",
       `## Shared Prompt Template: ${pane.codexTemplate}\n${shared.trim()}`,
       `## Tool Prompt Template: ${pane.codexToolTemplate}\n${tool.trim()}`,
+      config.value.finalCustomPrompt.trim()
+        ? `## Final Custom Prompt\n${config.value.finalCustomPrompt.trim()}`
+        : "",
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -1004,6 +1043,9 @@ async function handleLaunch(): Promise<void> {
         </button>
         <button class="soft-button" :disabled="isBusy" @click="clearEnabledPrompts">
           清空启用提示词
+        </button>
+        <button class="soft-button" :disabled="isBusy" @click="openFinalPromptDialog">
+          最后的自定拼接词
         </button>
         <button class="import-button" :disabled="isBusy" @click="openPromptImportPicker">
           一键导入提示词
@@ -1155,6 +1197,31 @@ async function handleLaunch(): Promise<void> {
         <footer>
           <button @click="closeCodexDialog">Cancel</button>
           <button class="launch-button" @click="applyCodexDialog">OK</button>
+        </footer>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" v-if="isFinalPromptDialogOpen">
+      <section class="modal">
+        <header>
+          <div>
+            <p class="eyebrow">Vibecoding prompt</p>
+            <h2>最后的自定拼接词</h2>
+          </div>
+          <button class="icon-button" @click="closeFinalPromptDialog">x</button>
+        </header>
+
+        <textarea
+          class="prompt-editor"
+          v-model="finalPromptDraft"
+          placeholder="这里的内容会拼接到每个 vibecoding pane 的最终 prompt 最后面。"
+        />
+
+        <footer>
+          <button @click="closeFinalPromptDialog">Cancel</button>
+          <button class="launch-button" :disabled="isBusy" @click="applyFinalPromptDialog">
+            Save
+          </button>
         </footer>
       </section>
     </div>
