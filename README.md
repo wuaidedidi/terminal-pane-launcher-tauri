@@ -144,6 +144,7 @@ fnm env --use-on-cd
 - 选中文本后点 `设为锚点`，模板会自动插入锚点。
 - 每个 pane 可以为锚点填写自己的差异值。
 - `上传模板` 和 `自定义模板` 都会覆盖当前 query 模板。
+- `一键导入公开仓库` 可以从 Markdown 文件导入最多 20 组本地 repo 路径和锚点值，格式见 [`docs/query-public-repo-import-format.md`](docs/query-public-repo-import-format.md)。
 - `选择目录` 后会自动把目录名填到 title。
 - `Codex` 默认是 `yolo`。
 - 可以一键把全部 pane 切成 `resume`，也可以一键切回 `new`。

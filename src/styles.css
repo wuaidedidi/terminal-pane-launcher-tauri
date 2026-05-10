@@ -200,7 +200,7 @@ h2 {
 
 .query-toolbar {
   display: grid;
-  grid-template-columns: minmax(360px, 0.9fr) minmax(360px, 1.2fr) minmax(430px, max-content);
+  grid-template-columns: minmax(620px, 1.2fr) minmax(320px, 1fr) minmax(430px, max-content);
   gap: 16px;
   align-items: end;
   margin-top: 18px;
@@ -289,7 +289,7 @@ h2 {
 
 .toolbar-row {
   display: grid;
-  grid-template-columns: max-content max-content minmax(120px, 1fr);
+  grid-template-columns: repeat(3, max-content) minmax(120px, 1fr);
   gap: 10px;
   align-items: center;
 }

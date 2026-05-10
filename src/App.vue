@@ -57,6 +57,7 @@ const sharedTemplateDraft = ref(SHARED_TEMPLATES[0]);
 const toolTemplateDraft = ref(TOOL_TEMPLATES[0]);
 const promptImportInput = ref<HTMLInputElement | null>(null);
 const queryTemplateImportInput = ref<HTMLInputElement | null>(null);
+const queryPublicRepoImportInput = ref<HTMLInputElement | null>(null);
 const queryEditingIndex = ref<number | null>(null);
 const queryAnchorNameDraft = ref("");
 const querySelectedTextDraft = ref("");
@@ -83,11 +84,24 @@ const deliveryModes = computed<PromptDelivery[]>(() =>
 const codexModes: CodexMode[] = ["", "yolo", "dangerous", "full-auto"];
 const queryCodexModes: Exclude<CodexMode, "">[] = ["yolo", "dangerous", "full-auto"];
 const PROMPT_IMPORT_SEPARATOR = "---PROMPT---";
+const QUERY_REPO_IMPORT_SEPARATOR = "---REPO---";
 
 interface PromptImportParseResult {
   prompts: string[];
   emptyBlockCount: number;
   skippedPromptCount: number;
+}
+
+interface QueryRepoImportGroup {
+  path: string;
+  anchorValues: Record<string, string>;
+}
+
+interface QueryRepoImportParseResult {
+  groups: QueryRepoImportGroup[];
+  skippedGroupCount: number;
+  missingPathCount: number;
+  emptyBlockCount: number;
 }
 
 const queryEnabledCount = computed(
@@ -319,6 +333,45 @@ function parsePromptImportMarkdown(raw: string): PromptImportParseResult {
     prompts: nonEmptyPrompts.slice(0, MAX_PANES),
     emptyBlockCount: promptSections.length - nonEmptyPrompts.length,
     skippedPromptCount: Math.max(0, nonEmptyPrompts.length - MAX_PANES),
+  };
+}
+
+function parseQueryRepoImportMarkdown(raw: string): QueryRepoImportParseResult {
+  const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+  const sections = normalized.split(/^[ \t]*---REPO---[ \t]*$/gm).slice(1);
+  let missingPathCount = 0;
+  let emptyBlockCount = 0;
+
+  const groups = sections.flatMap<QueryRepoImportGroup>((section) => {
+    const block = section.trim();
+    if (!block) {
+      emptyBlockCount += 1;
+      return [];
+    }
+
+    const path = block.match(/^[ \t]*path[ \t]*:[ \t]*(.+?)[ \t]*$/im)?.[1]?.trim() ?? "";
+    if (!path) {
+      missingPathCount += 1;
+      return [];
+    }
+
+    const anchorValues: Record<string, string> = {};
+    const anchorPattern = /^\[anchor:([a-zA-Z0-9_-]+)\][ \t]*\n?([\s\S]*?)^\[\/anchor\][ \t]*$/gm;
+    for (const match of block.matchAll(anchorPattern)) {
+      const label = match[1]?.trim();
+      if (label) {
+        anchorValues[label] = match[2].trim();
+      }
+    }
+
+    return [{ path, anchorValues }];
+  });
+
+  return {
+    groups: groups.slice(0, MAX_PANES),
+    skippedGroupCount: Math.max(0, groups.length - MAX_PANES),
+    missingPathCount,
+    emptyBlockCount,
   };
 }
 
@@ -578,6 +631,91 @@ async function importQueryTemplateFile(event: Event): Promise<void> {
     status.value = `Loaded ${file.name} into query workspace.`;
   } catch (error) {
     status.value = `Template import failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
+async function importQueryPublicRepoFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+
+  if (!file || !queryWorkspace.value) {
+    return;
+  }
+
+  if (!file.name.toLowerCase().endsWith(".md")) {
+    status.value = "Public repo import needs a .md file.";
+    return;
+  }
+
+  try {
+    isBusy.value = true;
+    const parsed = parseQueryRepoImportMarkdown(await file.text());
+
+    if (parsed.groups.length === 0) {
+      status.value = `No repo blocks found. Use ${QUERY_REPO_IMPORT_SEPARATOR} as the separator.`;
+      previewText.value = [
+        `Public repo import skipped: ${file.name}`,
+        `Use one ${QUERY_REPO_IMPORT_SEPARATOR} line before each repo block.`,
+        "Each block needs a path: line.",
+      ].join("\n");
+      return;
+    }
+
+    const baseAnchorValues = queryWorkspace.value.anchors.reduce<Record<string, string>>(
+      (acc, anchor) => {
+        acc[anchor.label] = "";
+        return acc;
+      },
+      {},
+    );
+
+    queryWorkspace.value.panes = Array.from({ length: MAX_PANES }, (_, index) => {
+      const defaultPane = createDefaultQueryPane(index, false, currentPlatform.value);
+      const group = parsed.groups[index];
+      if (!group) {
+        return {
+          ...defaultPane,
+          anchorValues: { ...baseAnchorValues },
+        };
+      }
+
+      const title = getDirectoryTitle(group.path) || `Pane ${index + 1}`;
+      return {
+        ...defaultPane,
+        enabled: true,
+        title,
+        path: group.path,
+        codexMode: "yolo" as const,
+        codexLaunchMode: "new" as const,
+        anchorValues: {
+          ...baseAnchorValues,
+          ...group.anchorValues,
+        },
+      };
+    });
+    queryWorkspace.value = repairQueryWorkspace(queryWorkspace.value, currentPlatform.value);
+    syncQueryAnchorValues();
+    await saveQueryWorkspace(queryWorkspace.value, currentPlatform.value);
+
+    previewText.value = [
+      `Public repo import: ${file.name}`,
+      `Imported repo groups: ${parsed.groups.length}`,
+      parsed.skippedGroupCount > 0 ? `Skipped extra groups: ${parsed.skippedGroupCount}` : "",
+      parsed.missingPathCount > 0 ? `Skipped groups without path: ${parsed.missingPathCount}` : "",
+      parsed.emptyBlockCount > 0 ? `Skipped empty blocks: ${parsed.emptyBlockCount}` : "",
+      "Imported panes were reset to query defaults, then filled with path, title, and anchor values.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    status.value =
+      parsed.skippedGroupCount > 0
+        ? `Imported ${parsed.groups.length} repo group(s), skipped ${parsed.skippedGroupCount} extra group(s).`
+        : `Imported ${parsed.groups.length} repo group(s) from ${file.name}.`;
+  } catch (error) {
+    status.value = `Public repo import failed: ${formatError(error)}`;
   } finally {
     isBusy.value = false;
   }
@@ -1253,6 +1391,9 @@ async function handleLaunch(): Promise<void> {
             <button class="soft-button" :disabled="isBusy" @click="openQueryTemplateDialog">
               自定义模板
             </button>
+            <button class="soft-button" :disabled="isBusy" @click="queryPublicRepoImportInput?.click()">
+              一键导入公开仓库
+            </button>
             <input v-model="queryWorkspace.templateName" placeholder="Template name" />
           </div>
         </label>
@@ -1287,6 +1428,13 @@ async function handleLaunch(): Promise<void> {
         type="file"
         accept=".md,text/markdown"
         @change="importQueryTemplateFile"
+      />
+      <input
+        ref="queryPublicRepoImportInput"
+        class="file-input"
+        type="file"
+        accept=".md,text/markdown"
+        @change="importQueryPublicRepoFile"
       />
 
       <section class="query-workbench" v-if="queryWorkspace">
