@@ -825,9 +825,17 @@ function applyQueryAnchorFromSelection(): void {
 function renderQueryPrompt(pane: QueryPaneConfig): string {
   if (!queryWorkspace.value) return "";
 
-  return queryWorkspace.value.anchors.reduce((result, anchor) => {
-    const value = pane.anchorValues[anchor.label]?.trim() || anchor.selectedText || "";
-    return result.replace(new RegExp(`\\{\\{\\s*${anchor.label}\\s*\\}\\}`, "g"), value);
+  const anchorsByLabel = new Map(
+    queryWorkspace.value.anchors.map((anchor) => [anchor.label, anchor] as const),
+  );
+  const templateLabels = extractQueryAnchorsFromTemplate(queryWorkspace.value.templateText).map(
+    (anchor) => anchor.label,
+  );
+  const labels = [...new Set([...templateLabels, ...Object.keys(pane.anchorValues)])];
+
+  return labels.reduce((result, label) => {
+    const value = pane.anchorValues[label]?.trim() || anchorsByLabel.get(label)?.selectedText || "";
+    return result.replace(new RegExp(`\\{\\{\\s*${label}\\s*\\}\\}`, "g"), value);
   }, queryWorkspace.value.templateText);
 }
 
@@ -867,12 +875,29 @@ async function persistQueryWorkspace(): Promise<boolean> {
   const knownAnchors = new Map(
     queryWorkspace.value.anchors.map((anchor) => [anchor.label, anchor] as const),
   );
-  queryWorkspace.value.anchors = extractQueryAnchorsFromTemplate(queryWorkspace.value.templateText).map(
+  const templateAnchors = extractQueryAnchorsFromTemplate(queryWorkspace.value.templateText).map(
     (anchor) => ({
       ...anchor,
       selectedText: knownAnchors.get(anchor.label)?.selectedText ?? anchor.selectedText,
     }),
   );
+  const templateLabels = new Set(templateAnchors.map((anchor) => anchor.label));
+  const valueLabels = new Set(
+    queryWorkspace.value.panes.flatMap((pane) =>
+      Object.entries(pane.anchorValues)
+        .filter(([, value]) => value.trim() !== "")
+        .map(([label]) => label),
+    ),
+  );
+  const importedAnchors = [...valueLabels]
+    .filter((label) => !templateLabels.has(label))
+    .map((label) => ({
+      id: label,
+      label,
+      selectedText: knownAnchors.get(label)?.selectedText ?? "",
+    }));
+
+  queryWorkspace.value.anchors = [...templateAnchors, ...importedAnchors];
   queryWorkspace.value = repairQueryWorkspace(queryWorkspace.value, currentPlatform.value);
   syncQueryAnchorValues();
   await saveQueryWorkspace(queryWorkspace.value, currentPlatform.value);
