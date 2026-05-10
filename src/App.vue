@@ -277,6 +277,10 @@ function isValueQueryPane(pane: QueryPaneConfig, index: number): boolean {
   );
 }
 
+function hasQueryAnchorValue(pane: QueryPaneConfig): boolean {
+  return Object.values(pane.anchorValues).some((value) => value.trim() !== "");
+}
+
 async function selectValuePanes(): Promise<void> {
   if (!config.value) return;
 
@@ -538,6 +542,21 @@ function syncQueryAnchorValues(): void {
   });
 }
 
+function ensureQueryAnchors(labels: string[]): void {
+  if (!queryWorkspace.value) return;
+
+  const existing = new Set(queryWorkspace.value.anchors.map((anchor) => anchor.label));
+  labels.forEach((label) => {
+    if (existing.has(label)) return;
+    queryWorkspace.value.anchors.push({
+      id: label,
+      label,
+      selectedText: "",
+    });
+    existing.add(label);
+  });
+}
+
 function extractQueryAnchorsFromTemplate(templateText: string): QueryAnchor[] {
   const matches = [...templateText.matchAll(/\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/g)];
   const seen = new Set<string>();
@@ -663,6 +682,11 @@ async function importQueryPublicRepoFile(event: Event): Promise<void> {
       ].join("\n");
       return;
     }
+
+    const importedAnchorLabels = [
+      ...new Set(parsed.groups.flatMap((group) => Object.keys(group.anchorValues))),
+    ];
+    ensureQueryAnchors(importedAnchorLabels);
 
     const baseAnchorValues = queryWorkspace.value.anchors.reduce<Record<string, string>>(
       (acc, anchor) => {
@@ -1504,7 +1528,13 @@ async function handleLaunch(): Promise<void> {
             <option value="new">new</option>
             <option value="resume">resume</option>
           </select>
-          <button class="soft-button" @click="openQueryAnchorDialog(index)">Edit</button>
+          <button
+            class="soft-button"
+            :class="{ 'has-anchor-values': hasQueryAnchorValue(pane) }"
+            @click="openQueryAnchorDialog(index)"
+          >
+            Edit
+          </button>
         </div>
       </section>
 

@@ -444,6 +444,11 @@ label {
   background: #e6f1e5;
 }
 
+.soft-button.has-anchor-values {
+  color: #fffaf0;
+  background: #c95c3b;
+}
+
 .browse-button {
   padding-inline: 10px;
 }

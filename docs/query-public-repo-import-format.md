@@ -48,5 +48,6 @@ backend, user
 - `path:` 需要是本地目录路径，不是 GitHub URL。
 - 没有 `path:` 的组会跳过。
 - 没有 anchor 的组也可以导入，只会填目录和标题。
-- 文件里的 anchor 名如果当前模板没有使用，导入后不会影响最终渲染。
+- 文件里的 anchor 名会自动加入 query 的 Anchors 列表。
+- 如果想让导入值进入最终 prompt，当前模板里也需要写对应占位符，比如 `{{repo_url}}`。
 - 当前模板有但导入文件没写的 anchor，会保持为空值。
