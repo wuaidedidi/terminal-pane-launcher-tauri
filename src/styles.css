@@ -482,6 +482,16 @@ label {
   font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
 }
 
+.query-template-draft {
+  min-height: 420px;
+  margin-bottom: 18px;
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+.query-template-modal label {
+  margin-top: 18px;
+}
+
 @media (max-width: 1200px) {
   .query-workbench {
     grid-template-columns: 1fr;

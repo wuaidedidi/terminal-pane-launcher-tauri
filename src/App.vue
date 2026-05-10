@@ -62,6 +62,9 @@ const querySelectedTextDraft = ref("");
 const queryTemplateEditor = ref<HTMLTextAreaElement | null>(null);
 const queryTemplateSelection = ref({ start: 0, end: 0 });
 const queryAnchorValuesDraft = ref<Record<string, string>>({});
+const isQueryTemplateDialogOpen = ref(false);
+const queryTemplateNameDraft = ref("");
+const queryTemplateTextDraft = ref("");
 
 const enabledCount = computed(() => config.value?.panes.filter((pane) => pane.enabled).length ?? 0);
 const isMacOs = computed(() => currentPlatform.value === "macos");
@@ -440,6 +443,24 @@ async function clearEnabledQueryPanes(): Promise<void> {
   }
 }
 
+async function setAllQueryLaunchModes(mode: "new" | "resume"): Promise<void> {
+  if (!queryWorkspace.value) return;
+
+  try {
+    isBusy.value = true;
+    queryWorkspace.value.panes.forEach((pane) => {
+      pane.codexLaunchMode = mode;
+    });
+    await saveQueryWorkspace(queryWorkspace.value, currentPlatform.value);
+    status.value = `Set all query panes to ${mode}.`;
+    previewText.value = `All query panes now launch in ${mode} mode.`;
+  } catch (error) {
+    status.value = `Query launch mode update failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
 function getQueryPane(index: number): QueryPaneConfig {
   if (!queryWorkspace.value) {
     throw new Error("Query workspace is not loaded.");
@@ -492,6 +513,50 @@ function slugifyQueryAnchorLabel(value: string): string {
   return slug || "anchor";
 }
 
+function applyQueryTemplateText(name: string, text: string): void {
+  if (!queryWorkspace.value) return;
+
+  const previousAnchors = new Map(
+    queryWorkspace.value.anchors.map((anchor) => [anchor.label, anchor] as const),
+  );
+  queryWorkspace.value.templateName = name.trim() || "自定义模板";
+  queryWorkspace.value.templateText = text.replace(/^\uFEFF/, "");
+  queryWorkspace.value.anchors = extractQueryAnchorsFromTemplate(queryWorkspace.value.templateText).map(
+    (anchor) => ({
+      ...anchor,
+      selectedText: previousAnchors.get(anchor.label)?.selectedText ?? anchor.selectedText,
+    }),
+  );
+  syncQueryAnchorValues();
+}
+
+function openQueryTemplateDialog(): void {
+  if (!queryWorkspace.value) return;
+
+  queryTemplateNameDraft.value = queryWorkspace.value.templateName || "自定义模板";
+  queryTemplateTextDraft.value = queryWorkspace.value.templateText;
+  isQueryTemplateDialogOpen.value = true;
+}
+
+function closeQueryTemplateDialog(): void {
+  isQueryTemplateDialogOpen.value = false;
+}
+
+async function applyQueryTemplateDialog(): Promise<void> {
+  try {
+    isBusy.value = true;
+    applyQueryTemplateText(queryTemplateNameDraft.value, queryTemplateTextDraft.value);
+    await saveQueryWorkspace(queryWorkspace.value, currentPlatform.value);
+    previewText.value = `Loaded custom query template: ${queryWorkspace.value.templateName}`;
+    status.value = `Custom query template saved.`;
+    closeQueryTemplateDialog();
+  } catch (error) {
+    status.value = `Custom template save failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
 async function importQueryTemplateFile(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
@@ -504,17 +569,8 @@ async function importQueryTemplateFile(event: Event): Promise<void> {
   try {
     isBusy.value = true;
     const text = await file.text();
-    queryWorkspace.value.templateName = file.name;
-    queryWorkspace.value.templateText = text.replace(/^\uFEFF/, "");
-    queryWorkspace.value.anchors = extractQueryAnchorsFromTemplate(queryWorkspace.value.templateText);
-    queryWorkspace.value.panes.forEach((pane) => {
-      queryWorkspace.value?.anchors.forEach((anchor) => {
-        if (!(anchor.label in pane.anchorValues)) {
-          pane.anchorValues[anchor.label] = "";
-        }
-      });
-    });
-    syncQueryAnchorValues();
+    applyQueryTemplateText(file.name, text);
+    await saveQueryWorkspace(queryWorkspace.value, currentPlatform.value);
     previewText.value = `Loaded query template: ${file.name}`;
     status.value = `Loaded ${file.name} into query workspace.`;
   } catch (error) {
@@ -1127,6 +1183,9 @@ async function handleLaunch(): Promise<void> {
             <button class="import-button" :disabled="isBusy" @click="queryTemplateImportInput?.click()">
               上传模板
             </button>
+            <button class="soft-button" :disabled="isBusy" @click="openQueryTemplateDialog">
+              自定义模板
+            </button>
             <input v-model="queryWorkspace.templateName" placeholder="Template name" />
           </div>
         </label>
@@ -1145,6 +1204,12 @@ async function handleLaunch(): Promise<void> {
           </button>
           <button class="soft-button" :disabled="isBusy" @click="clearEnabledQueryPanes">
             一键清空
+          </button>
+          <button class="soft-button" :disabled="isBusy" @click="setAllQueryLaunchModes('resume')">
+            全部 resume
+          </button>
+          <button class="soft-button" :disabled="isBusy" @click="setAllQueryLaunchModes('new')">
+            全部 new
           </button>
         </div>
       </section>
@@ -1262,6 +1327,38 @@ async function handleLaunch(): Promise<void> {
           <footer>
             <button @click="closeQueryAnchorDialog">Cancel</button>
             <button class="launch-button" @click="applyQueryAnchorDialog">OK</button>
+          </footer>
+        </section>
+      </div>
+
+      <div class="modal-backdrop" v-if="isQueryTemplateDialogOpen">
+        <section class="modal query-template-modal">
+          <header>
+            <div>
+              <p class="eyebrow">Query template</p>
+              <h2>自定义模板</h2>
+            </div>
+            <button class="icon-button" @click="closeQueryTemplateDialog">x</button>
+          </header>
+
+          <label>
+            Template name
+            <input v-model="queryTemplateNameDraft" placeholder="自定义模板" />
+          </label>
+          <label>
+            Markdown
+            <textarea
+              v-model="queryTemplateTextDraft"
+              class="query-template-draft"
+              placeholder="在这里粘贴 Markdown 模板，使用 {{anchor}} 标注可替换位置。"
+            />
+          </label>
+
+          <footer>
+            <button @click="closeQueryTemplateDialog">Cancel</button>
+            <button class="launch-button" :disabled="isBusy" @click="applyQueryTemplateDialog">
+              Save
+            </button>
           </footer>
         </section>
       </div>
