@@ -1176,9 +1176,9 @@ async function handleLaunch(): Promise<void> {
         </div>
       </section>
 
-      <section class="settings-bar query-toolbar">
-        <label>
-          Template file
+      <section class="query-toolbar">
+        <label class="query-tool-group">
+          Template
           <div class="toolbar-row">
             <button class="import-button" :disabled="isBusy" @click="queryTemplateImportInput?.click()">
               上传模板
@@ -1189,8 +1189,8 @@ async function handleLaunch(): Promise<void> {
             <input v-model="queryWorkspace.templateName" placeholder="Template name" />
           </div>
         </label>
-        <label>
-          Anchor name
+        <label class="query-tool-group query-anchor-tool">
+          Anchor
           <div class="toolbar-row">
             <input v-model="queryAnchorNameDraft" placeholder="选中文字后输入锚点名" />
             <button class="soft-button" :disabled="isBusy" @click="applyQueryAnchorFromSelection">
@@ -1198,19 +1198,19 @@ async function handleLaunch(): Promise<void> {
             </button>
           </div>
         </label>
-        <div class="settings-summary">
+        <div class="query-tool-group query-actions">
+          <span>Batch</span>
           <button class="soft-button" :disabled="isBusy" @click="selectValueQueryPanes">
             全选有目录 pane
           </button>
           <button class="soft-button" :disabled="isBusy" @click="clearEnabledQueryPanes">
             一键清空
           </button>
-          <button class="soft-button" :disabled="isBusy" @click="setAllQueryLaunchModes('resume')">
-            全部 resume
-          </button>
-          <button class="soft-button" :disabled="isBusy" @click="setAllQueryLaunchModes('new')">
-            全部 new
-          </button>
+          <div class="segmented-control" aria-label="Set all query launch modes">
+            <span>Mode</span>
+            <button :disabled="isBusy" @click="setAllQueryLaunchModes('new')">new</button>
+            <button :disabled="isBusy" @click="setAllQueryLaunchModes('resume')">resume</button>
+          </div>
         </div>
       </section>
 
