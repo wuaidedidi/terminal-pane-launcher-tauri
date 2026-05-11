@@ -1047,7 +1047,11 @@ fn build_iterm_applescript(plans: &[MacPanePlan], window_mode: &str, preview: bo
     for column in columns.iter().skip(1) {
         let plan = &column[0];
         let variable = format!("pane_{pane_variable_index}");
-        lines.push(format!("    tell pane_0"));
+        let split_source = top_panes
+            .last()
+            .cloned()
+            .unwrap_or_else(|| "pane_0".to_string());
+        lines.push(format!("    tell {split_source}"));
         lines.push(format!(
             "      set {variable} to ({})",
             action_with_profile("split vertically", &plan.profile)
@@ -1064,10 +1068,10 @@ fn build_iterm_applescript(plans: &[MacPanePlan], window_mode: &str, preview: bo
     }
 
     for (column_index, column) in columns.iter().enumerate() {
-        let top_pane = &top_panes[column_index];
+        let mut split_source = top_panes[column_index].clone();
         for plan in column.iter().skip(1) {
             let variable = format!("pane_{pane_variable_index}");
-            lines.push(format!("    tell {top_pane}"));
+            lines.push(format!("    tell {split_source}"));
             lines.push(format!(
                 "      set {variable} to ({})",
                 action_with_profile("split horizontally", &plan.profile)
@@ -1079,6 +1083,7 @@ fn build_iterm_applescript(plans: &[MacPanePlan], window_mode: &str, preview: bo
                 applescript_quote(mac_plan_command(plan, preview))
             ));
             lines.push("    end tell".to_string());
+            split_source = variable;
             pane_variable_index += 1;
         }
     }
