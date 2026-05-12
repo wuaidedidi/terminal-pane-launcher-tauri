@@ -875,6 +875,19 @@ fn mac_plan_command(plan: &MacPanePlan, preview: bool) -> &str {
     }
 }
 
+fn push_iterm_pane_command(lines: &mut Vec<String>, indent: &str, plan: &MacPanePlan, preview: bool) {
+    if !is_blank(&plan.title) {
+        lines.push(format!(
+            "{indent}set name to {}",
+            applescript_quote(plan.title.trim())
+        ));
+    }
+    lines.push(format!(
+        "{indent}write text {}",
+        applescript_quote(mac_plan_command(plan, preview))
+    ));
+}
+
 fn mac_shell_bootstrap() -> &'static str {
     r#"export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH";
 if [ -r /etc/zprofile ]; then . /etc/zprofile >/dev/null 2>&1 || true; fi;
@@ -1035,10 +1048,7 @@ fn build_iterm_applescript(plans: &[MacPanePlan], window_mode: &str, preview: bo
     lines.push("  set bounds of current window to {leftEdge, topEdge, rightEdge, bottomEdge}".to_string());
     lines.push("  set pane_0 to current session of current window".to_string());
     lines.push("  tell pane_0".to_string());
-    lines.push(format!(
-        "    write text {}",
-        applescript_quote(mac_plan_command(first, preview))
-    ));
+    push_iterm_pane_command(&mut lines, "    ", first, preview);
     lines.push("  end tell".to_string());
 
     let mut pane_variable_index = 1usize;
@@ -1058,10 +1068,7 @@ fn build_iterm_applescript(plans: &[MacPanePlan], window_mode: &str, preview: bo
         ));
         lines.push("    end tell".to_string());
         lines.push(format!("    tell {variable}"));
-        lines.push(format!(
-            "      write text {}",
-            applescript_quote(mac_plan_command(plan, preview))
-        ));
+        push_iterm_pane_command(&mut lines, "      ", plan, preview);
         lines.push("    end tell".to_string());
         top_panes.push(variable);
         pane_variable_index += 1;
@@ -1078,10 +1085,7 @@ fn build_iterm_applescript(plans: &[MacPanePlan], window_mode: &str, preview: bo
             ));
             lines.push("    end tell".to_string());
             lines.push(format!("    tell {variable}"));
-            lines.push(format!(
-                "      write text {}",
-                applescript_quote(mac_plan_command(plan, preview))
-            ));
+            push_iterm_pane_command(&mut lines, "      ", plan, preview);
             lines.push("    end tell".to_string());
             split_source = variable;
             pane_variable_index += 1;
