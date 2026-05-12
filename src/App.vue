@@ -304,8 +304,10 @@ async function selectValuePanes(): Promise<void> {
   }
 }
 
-async function applyBulkToolTemplate(): Promise<void> {
+async function applyBulkToolTemplate(event: Event): Promise<void> {
   if (!config.value) return;
+
+  bulkToolTemplate.value = (event.target as HTMLSelectElement).value;
 
   try {
     isBusy.value = true;
@@ -1245,16 +1247,13 @@ async function handleLaunch(): Promise<void> {
       </div>
       <div class="settings-actions">
         <label class="bulk-tool-template">
-          Tool template
-          <select v-model="bulkToolTemplate" :disabled="isBusy">
+          全部 Tool template
+          <select :value="bulkToolTemplate" :disabled="isBusy" @change="applyBulkToolTemplate">
             <option v-for="template in TOOL_TEMPLATES" :key="template" :value="template">
               {{ template }}
             </option>
           </select>
         </label>
-        <button class="soft-button" :disabled="isBusy" @click="applyBulkToolTemplate">
-          一键切换 Tool
-        </button>
         <button class="soft-button" :disabled="isBusy" @click="selectValuePanes">
           全选有目录 pane
         </button>
