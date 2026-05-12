@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="120" y1="80" x2="900" y2="940" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f8fff7"/>
+      <stop offset="1" stop-color="#dff3ec"/>
+    </linearGradient>
+    <linearGradient id="fish" x1="230" y1="320" x2="820" y2="680" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#20a6b8"/>
+      <stop offset="1" stop-color="#2378d1"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="28" stdDeviation="34" flood-color="#163f52" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <rect x="64" y="64" width="896" height="896" rx="210" fill="url(#bg)"/>
+  <rect x="64" y="64" width="896" height="896" rx="210" fill="none" stroke="#ffffff" stroke-width="28" opacity="0.9"/>
+
+  <g filter="url(#shadow)">
+    <path
+      d="M786 512c62-64 112-91 150-101-4 44-27 83-70 120 42 38 65 78 70 120-39-10-89-37-150-101-77 82-168 127-274 127-144 0-259-70-346-165 87-95 202-165 346-165 106 0 197 45 274 165Z"
+      fill="url(#fish)"
+    />
+    <path
+      d="M219 512c75-84 172-134 291-134 73 0 141 24 202 70-54-24-114-37-180-37-127 0-229 39-313 101Z"
+      fill="#58d5d1"
+      opacity="0.55"
+    />
+    <circle cx="378" cy="476" r="37" fill="#f8fff7"/>
+    <circle cx="391" cy="468" r="14" fill="#102723"/>
+    <path
+      d="M518 652c55-37 91-83 108-140-17-57-53-103-108-140"
+      fill="none"
+      stroke="#d9fff7"
+      stroke-width="34"
+      stroke-linecap="round"
+      opacity="0.62"
+    />
+    <path
+      d="M254 512c55 24 103 24 144 0-41-24-89-24-144 0Z"
+      fill="#d9fff7"
+      opacity="0.28"
+    />
+  </g>
+</svg>
