@@ -55,6 +55,7 @@ const modeDraft = ref<CodexMode>("yolo");
 const deliveryDraft = ref<PromptDelivery>("manual");
 const sharedTemplateDraft = ref(SHARED_TEMPLATES[0]);
 const toolTemplateDraft = ref(TOOL_TEMPLATES[0]);
+const bulkToolTemplate = ref(TOOL_TEMPLATES[0]);
 const promptImportInput = ref<HTMLInputElement | null>(null);
 const queryTemplateImportInput = ref<HTMLInputElement | null>(null);
 const queryPublicRepoImportInput = ref<HTMLInputElement | null>(null);
@@ -298,6 +299,24 @@ async function selectValuePanes(): Promise<void> {
     previewText.value = `Selected ${selectedCount} pane(s) that have real project directories.`;
   } catch (error) {
     status.value = `Select value panes failed: ${formatError(error)}`;
+  } finally {
+    isBusy.value = false;
+  }
+}
+
+async function applyBulkToolTemplate(): Promise<void> {
+  if (!config.value) return;
+
+  try {
+    isBusy.value = true;
+    config.value.panes.forEach((pane) => {
+      pane.codexToolTemplate = bulkToolTemplate.value;
+    });
+    await saveConfig(config.value, currentPlatform.value);
+    status.value = `Set all pane tool templates to ${bulkToolTemplate.value}.`;
+    previewText.value = `Updated ${config.value.panes.length} pane(s) to use ${bulkToolTemplate.value}.`;
+  } catch (error) {
+    status.value = `Tool template update failed: ${formatError(error)}`;
   } finally {
     isBusy.value = false;
   }
@@ -1225,6 +1244,17 @@ async function handleLaunch(): Promise<void> {
         Enabled panes must choose real project directories before launch.
       </div>
       <div class="settings-actions">
+        <label class="bulk-tool-template">
+          Tool template
+          <select v-model="bulkToolTemplate" :disabled="isBusy">
+            <option v-for="template in TOOL_TEMPLATES" :key="template" :value="template">
+              {{ template }}
+            </option>
+          </select>
+        </label>
+        <button class="soft-button" :disabled="isBusy" @click="applyBulkToolTemplate">
+          一键切换 Tool
+        </button>
         <button class="soft-button" :disabled="isBusy" @click="selectValuePanes">
           全选有目录 pane
         </button>

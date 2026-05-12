@@ -287,6 +287,14 @@ h2 {
   white-space: nowrap;
 }
 
+.bulk-tool-template {
+  min-width: 210px;
+}
+
+.bulk-tool-template select {
+  margin-top: 4px;
+}
+
 .toolbar-row {
   display: grid;
   grid-template-columns: repeat(3, max-content) minmax(120px, 1fr);
