@@ -2,6 +2,7 @@ use std::{
     env,
     fs,
     io::{BufRead, BufReader},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
@@ -109,6 +110,17 @@ fn codex_run_args_temp_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+fn mac_launcher_scripts_temp_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let path = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?
+        .join("temp")
+        .join("mac-launchers");
+    fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
 fn cleanup_codex_run_args_temp_files(app: &tauri::AppHandle) -> Result<(), String> {
     let directory = codex_run_args_temp_dir(app)?;
     for entry in fs::read_dir(&directory)
@@ -121,6 +133,24 @@ fn cleanup_codex_run_args_temp_files(app: &tauri::AppHandle) -> Result<(), Strin
         if file_type.is_file() && file_name.ends_with("-run-args.md") {
             fs::remove_file(entry.path()).map_err(|error| {
                 format!("Failed to remove stale Codex temp file {file_name}: {error}")
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn cleanup_mac_launcher_scripts(app: &tauri::AppHandle) -> Result<(), String> {
+    let directory = mac_launcher_scripts_temp_dir(app)?;
+    for entry in fs::read_dir(&directory)
+        .map_err(|error| format!("Failed to read {}: {}", directory.display(), error))?
+    {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if file_type.is_file() && file_name.ends_with("-launcher.sh") {
+            fs::remove_file(entry.path()).map_err(|error| {
+                format!("Failed to remove stale macOS launcher script {file_name}: {error}")
             })?;
         }
     }
@@ -645,6 +675,29 @@ fn write_codex_launcher_file(
     Ok(path)
 }
 
+fn write_mac_launcher_script(
+    app: &tauri::AppHandle,
+    pane_title: &str,
+    content: &str,
+) -> Result<PathBuf, String> {
+    let directory = mac_launcher_scripts_temp_dir(app)?;
+    let file_name = format!(
+        "{}-{}-launcher.sh",
+        unique_suffix(),
+        safe_file_stem(pane_title)
+    );
+    let path = directory.join(file_name);
+    fs::write(&path, content)
+        .map_err(|error| format!("Failed to write {}: {}", path.display(), error))?;
+    let mut permissions = fs::metadata(&path)
+        .map_err(|error| format!("Failed to read {} metadata: {}", path.display(), error))?
+        .permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions)
+        .map_err(|error| format!("Failed to chmod {}: {}", path.display(), error))?;
+    Ok(path)
+}
+
 fn collect_codex_session_files(directory: &Path, files: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(directory) else {
         return;
@@ -843,6 +896,29 @@ fn wrap_shell_command(path: &Path, title: &str, command: &str) -> String {
     script
 }
 
+fn mac_shell_script(path: &Path, title: &str, command: &str) -> String {
+    let mut script = format!(
+        "#!/bin/zsh\nsetopt no_nomatch\n{} cd {} || exit 1\n",
+        mac_shell_bootstrap(),
+        sh_quote(&path.display().to_string())
+    );
+
+    if !is_blank(title) {
+        script.push_str(&format!(
+            "printf '\\033]0;%s\\007' {}\n",
+            sh_quote(title.trim())
+        ));
+    }
+
+    if !is_blank(command) {
+        script.push_str(command.trim());
+        script.push('\n');
+    }
+
+    script.push_str("exec \"${SHELL:-/bin/zsh}\" -l\n");
+    script
+}
+
 fn mac_default_profile(config: &LauncherConfig) -> String {
     let value = config.default_profile.trim();
     if value.is_empty()
@@ -964,7 +1040,13 @@ fn build_mac_pane_plans(
             pane_number,
             title: pane.title.trim().to_string(),
             profile,
-            shell_command: wrap_shell_command(&path, &pane.title, &inner_command),
+            shell_command: if preview {
+                wrap_shell_command(&path, &pane.title, &inner_command)
+            } else {
+                let script = mac_shell_script(&path, &pane.title, &inner_command);
+                let script_path = write_mac_launcher_script(app, &pane.title, &script)?;
+                format!("exec {}", sh_quote(&script_path.display().to_string()))
+            },
             preview_command: wrap_shell_command(&path, &pane.title, &preview_inner_command),
             path,
             delivery,
@@ -1200,6 +1282,7 @@ fn run_macos_backend(
     let config = parse_launcher_config(&config_json)?;
     if !preview {
         cleanup_codex_run_args_temp_files(&app)?;
+        cleanup_mac_launcher_scripts(&app)?;
     }
     let plans = build_mac_pane_plans(&app, &config, preview, !skip_path_check)?;
     let window_mode = if is_blank(&config.window_mode) {
@@ -1398,6 +1481,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let _ = cleanup_codex_run_args_temp_files(&app.handle());
+            let _ = cleanup_mac_launcher_scripts(&app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
